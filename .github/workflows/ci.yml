@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # 默认 extras —— 刻意**不含** anthropic：全链路 MUST 能在没有任何模型密钥的
+      # 环境里跑通，这是脚本化实现作为一等公民的意义所在。
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Assert provider SDK is absent
+        run: |
+          python -c "import importlib.util, sys; sys.exit(1) if importlib.util.find_spec('anthropic') else print('anthropic 未安装 ✓')"
+
+      # 不设任何 ANTHROPIC_* 环境变量：有密钥反而会让「无密钥可跑」这条保证失去意义。
+      - name: Test
+        run: pytest
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check src tests
+      - run: ruff format --check src tests

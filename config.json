@@ -1,0 +1,15 @@
+{
+  "log": {
+    "path": "./logs",
+    "level": "warning"
+  },
+  "stateMachine": {
+    "picklePath": "./.zoo/zooStates.pic"
+  },
+  "worker": {
+    "pool": {
+      "size": 4,
+      "enable": false
+    }
+  }
+}

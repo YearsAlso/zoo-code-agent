@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zoo-code-agent"
+version = "0.0.1"
+description = "基于 zoo-framework 的最小 agent 消费者（演示 + 框架 Agent 线需求的验证消费方）"
+requires-python = ">=3.13"
+dependencies = [
+    # 只消费已发布的框架版本，MUST NOT 跟随 dev 主干（见 openspec/changes/add-minimal-agent-loop/design.md D1）
+    "zoo-framework==0.8.0",
+]
+
+[project.optional-dependencies]
+# 真实提供方走 extras：CI 与演示默认不需要任何 API 密钥
+anthropic = ["anthropic>=0.40"]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zoo_code_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "SIM", "C4", "RET", "ARG", "RUF"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "ARG002"]

@@ -28,9 +28,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # A2 / spec「真实提供方 MUST 为可选依赖」在 CI 侧的执行：默认安装 MUST NOT 引入
+      # 提供方 SDK。它同时把 tests/test_providers.py 里那条「缺依赖」用例从 skip 变成真跑
+      # （该用例在 anthropic 已安装时会 skip，skip 是静默的）。
+      # shell: bash 与纯 ASCII 输出都是必需的：windows runner 默认 shell 是 pwsh、控制台
+      # 编码是 cp1252，非 ASCII 会让本步**假失败**（实测过）。
       - name: Assert provider SDK is absent
+        shell: bash
         run: |
-          python -c "import importlib.util, sys; sys.exit(1) if importlib.util.find_spec('anthropic') else print('anthropic 未安装 ✓')"
+          python -c "import importlib.util, sys; sys.exit(1) if importlib.util.find_spec('anthropic') else print('OK: anthropic absent from default install')"
 
       # 不设任何 ANTHROPIC_* 环境变量：有密钥反而会让「无密钥可跑」这条保证失去意义。
       - name: Test

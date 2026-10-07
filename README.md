@@ -52,25 +52,26 @@ print(drive_session(master, "s1"))
 ## 跑真实产出发现的四件事
 
 这些都是**跑起来才发现**的框架行为，不是读文档能得到的。它们是本仓库「验证消费方」身份的实际产出，
-可作为框架 Agent 线的输入。
+已全部登记为 zoo-framework issue（[见 proposal 的实测结论表](openspec/changes/add-minimal-agent-loop/proposal.md)）：
+**[#72](https://github.com/YearsAlso/zoo-framework/issues/72)** · **[#73](https://github.com/YearsAlso/zoo-framework/issues/73)** · **[#74](https://github.com/YearsAlso/zoo-framework/issues/74)** ·（`@worker` 一项已由 [#49](https://github.com/YearsAlso/zoo-framework/issues/49) 处理）。
 
-1. **`@worker` 装饰器注册的是不被派发的表。** 它写 legacy `WorkerRegister`，而 `Master` 从
+1. **`@worker` 装饰器注册的是不被派发的表**（已由 [#49](https://github.com/YearsAlso/zoo-framework/issues/49) 弃用并排期删除）。它写 legacy `WorkerRegister`，而 `Master` 从
    `WorkerRegistry` 取；框架自带的 `example/threads/demo_thread.py` 正因此注册了却从不执行。
    可达路径是 `Master.register_worker`，而它内部要求 Worker **可无参构造**——所以本仓库用工厂
    返回一个闭包捕获上下文的类，而不是把上下文塞进模块级全局。
 
-2. **事件管道每 5 秒才推进一次，且没有公开的配置入口。** `EventWorker.__init__` 把
+2. **事件管道每 5 秒才推进一次，且没有公开的配置入口**（[#73](https://github.com/YearsAlso/zoo-framework/issues/73)）。`EventWorker.__init__` 把
    `delay_time` 硬编码为 5：它排空一次通道后会在 `run()` 里睡满 5 秒才结算，此间一直算在飞、
    不会被再次派发。于是**每一次事件派发都要等下一个节拍**——一次带工具调用的会话要跑若干秒，
    而不是毫秒。`worker:pool:*` 等配置键都不影响它。
 
-3. **框架没有「恰好一次」的收口。** 重试发生在 `EventReactor._execute` 自己的
+3. **框架没有「恰好一次」的收口**（[#74](https://github.com/YearsAlso/zoo-framework/issues/74)）。重试发生在 `EventReactor._execute` 自己的
    `while attempts` 循环里：回调抛错就被重放。注意 `core/waiter/dispatch_core.py` 里那句
    「恰好执行一次」说的是**单次 worker 不参与下一轮派发**的簿记语义，不是投递语义。付费工具
    若不做幂等，重放就是重复扣费——本仓库的 `IdempotencyLedger` 因此放在**调用方**，
    而不是去推动框架加特性（那会固化框架的接缝形状）。
 
-4. **状态机读盘是空操作，状态从不真正恢复。** 会话跑完后 `.zoo/zooStates.pic` 里确实有完整的
+4. **状态机读盘是空操作，状态从不真正恢复**（[#72](https://github.com/YearsAlso/zoo-framework/issues/72)）。会话跑完后 `.zoo/zooStates.pic` 里确实有完整的
    作用域与节点（**写盘正常**），但新进程里读回来是空的。原因在
    `StateMachineManager.load_state_machines`：落盘的是 `ThreadSafeDict`，而它**不是**
    `dict` 的子类，于是 `isinstance(state_machine, dict)` 恒假、赋值从不执行；同时

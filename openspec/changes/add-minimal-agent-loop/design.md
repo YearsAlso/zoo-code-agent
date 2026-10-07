@@ -34,6 +34,7 @@
 **MUST NOT**：因为需要恰好一次就去推动框架增加特性。那会把框架的接缝固化成当前 agent 的形状，与框架「先做接缝、可逆性不对称」的策略相冲。
 
 **预测为真时的动作**：向 zoo-framework 开 issue，附最小复现与实测证据。**预测为假时**：如实记录「框架在此点上已足够」，不得把预测当作既成事实写进结论。
+**结局（2026-10-07）**：预测为真——已开 [#74](https://github.com/YearsAlso/zoo-framework/issues/74)（语义缺口留档，非修复要求）；同轮实测另得 [#73](https://github.com/YearsAlso/zoo-framework/issues/73)（节拍硬编码 + 死键）、[#72](https://github.com/YearsAlso/zoo-framework/issues/72)（读盘空操作）。
 
 ## D4 · 模型接入的分层
 
@@ -52,6 +53,7 @@
 ## D6 · 会话状态
 
 **决策**：经 `StateMachineManager` 持久化。用到的 API：`create_scope(scope)` / `set_state(scope, key, value)` / `get_state(scope, key)`（`statemachine/state_machine_manager.py:56-104`）；落盘由框架的 `StateMachineWorker` 承担，本仓库不自建落盘格式。
+**结局（2026-10-07）**：写盘路径正常；读盘被证实为空操作（`ThreadSafeDict` 非 `dict` 子类，守卫恒假）——「重启续跑」移出本变更，见 proposal「实测结论」与 [#72](https://github.com/YearsAlso/zoo-framework/issues/72)。
 
 ## Risks
 

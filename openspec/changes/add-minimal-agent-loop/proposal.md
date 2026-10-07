@@ -32,7 +32,8 @@ zoo-code-agent 是本仓库承载的**第一个真实消费方**，兼作「怎�
 
 **D 组 · 会话状态**
 
-- 会话状态经框架 `StateMachineManager` 持久化，进程重启后可续跑
+- 会话状态经框架 `StateMachineManager` 持久化（**同进程**写入与读回）
+- 「重启续跑」**不属于本变更**：实测确认框架读盘是空操作（zoo-framework issue #72），作为独立回填点挂在 #72 上
 
 ## Capabilities
 
@@ -41,7 +42,7 @@ zoo-code-agent 是本仓库承载的**第一个真实消费方**，兼作「怎�
 - `agent-loop`：循环的推进、终止条件（预算 / 截止期 / 自然停止）与每轮的可程序读取产出
 - `model-client`：提供方抽象的契约、脚本化假实现的行为、真实实现的可选依赖边界
 - `tool-invocation`：工具契约、只读工具的安全边界、付费桩工具的角色、恰好一次的幂等保证
-- `session-persistence`：会话状态的持久化与重启续跑
+- `session-persistence`：会话状态的持久化（同进程）；重启续跑收窄到 #72 回填（见下）
 
 ### Modified Capabilities
 
@@ -60,3 +61,16 @@ zoo-code-agent 是本仓库承载的**第一个真实消费方**，兼作「怎�
 - 不做权限模型——只读工具集本身就是全部写权限边界
 - 不做同一轮内工具调用的并发执行（最小环先取确定性；并发是后续变更的题目）
 - 不追求与 claude-code 的能力对齐
+- **不做重启续跑**（框架读盘空操作，zoo-framework issue #72；修复后以独立变更回填）
+
+## 实测结论（收窄依据，2026-10-07）
+
+本变更作为框架「Agent 线」的第一个真实消费方，跑真实产出对照**已发布版 0.8.0** 得到四个框架缺口，
+已登记为 zoo-framework issue（dev 主干复核仍成立）：
+
+| 缺口 | issue | 对本变更的影响 |
+|---|---|---|
+| 状态机读盘空操作，状态从不恢复 | [#72](https://github.com/YearsAlso/zoo-framework/issues/72) | 「重启续跑」移出本变更（本收窄的直接原因） |
+| 事件管道节拍硬编码 5 秒 + `event:sleep` 死键 | [#73](https://github.com/YearsAlso/zoo-framework/issues/73) | 不阻塞本变更；会话推进按秒计而非毫秒 |
+| 事件回调失败即重放、无「恰好一次」收口 | [#74](https://github.com/YearsAlso/zoo-framework/issues/74) | 不阻塞本变更；幂等键按设计落在调用方 |
+| `@worker` 注册进不被派发的表 | 已由 [#49](https://github.com/YearsAlso/zoo-framework/issues/49) 处理 | 不影响本变更（走 `Master.register_worker`） |

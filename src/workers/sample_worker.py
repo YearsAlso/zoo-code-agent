@@ -5,11 +5,14 @@ class SampleWorker(BaseWorker):
     """sample Worker."""
 
     def __init__(self):
-        BaseWorker.__init__(self, {
-            "is_loop": True,
-            "delay_time": 10,
-            "name": "sample_worker",
-        })
+        BaseWorker.__init__(
+            self,
+            {
+                "is_loop": True,
+                "delay_time": 10,
+                "name": "sample_worker",
+            },
+        )
         self._tick = 0
 
     def _execute(self):

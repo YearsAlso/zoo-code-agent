@@ -17,11 +17,11 @@ from zoo_framework.reactor.event_reactor import EventReactor
 from zoo_framework.reactor.event_retry_strategy import EventRetryStrategy
 from zoo_framework.workers.base_worker import BaseWorker
 
-from .context import compact_view, estimate_tokens
-from .model import Message, ToolCall
-from .runtime import AgentRuntime, SessionState
-from .session import SessionStore
-from .tools import ToolError
+from context import compact_view, estimate_tokens
+from model import Message, ToolCall
+from runtime import AgentRuntime, SessionState
+from session import SessionStore
+from tools import ToolError
 
 TOOL_TOPIC = "tool_call"
 TOOL_CHANNEL = "agent_tools"
@@ -72,8 +72,8 @@ def _requeue_unfinished(store: SessionStore) -> None:
 def continue_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
     """在**既有**会话上追加一条用户消息，并清掉终止状态，使循环可以继续推进。
 
-    交互式入口（``zca``）用它实现多轮：一轮结束后会话记录与账本都还在，下一轮只是再追加
-    一条用户消息。MUST NOT 新建会话——那会把上下文丢掉，「REPL」也就不是 REPL 了。
+    交互式入口（``python src/main.py`` 的 REPL 模式）用它实现多轮：一轮结束后会话记录与账本都还在，下一轮只是再追加
+        一条用户消息。MUST NOT 新建会话——那会把上下文丢掉，「REPL」也就不是 REPL 了。
     """
     state = runtime.session(session_id)
     store = state.store

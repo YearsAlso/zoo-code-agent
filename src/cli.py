@@ -1,10 +1,15 @@
-"""命令行入口：交互式 REPL、无头单次执行与 JSON 事件流。
+"""会话命令行：无头单次执行、交互式 REPL 与 JSON 事件流。
 
-三种用法对应三种使用者：
+``src/main.py`` 是唯一入口，它负责分流：
 
-- ``zca``：给人用的交互式会话；
-- ``zca -p "..."``：给脚本 / CI 用的一次性执行，输出可管道；
-- ``zca --json``：给其它程序用的事件流，每行一个 JSON 对象。
+| 命令 | 去向 |
+|---|---|
+| ``python src/main.py`` | 脚手架默认行为：起调度器、注册 Worker、常驻运行 |
+| ``python src/main.py -p "..."`` | 本模块：一次性执行，输出可管道 |
+| ``python src/main.py -i`` | 本模块：交互式会话（多轮复用同一会话） |
+| ``python src/main.py --eval`` | 任务级基准 |
+
+带 ``-p`` 或 ``-i`` 之外的其他参数走本模块的参数解析。
 
 退出码区分终止原因（而不是一律 0/1），脚本才能据此区分"干完了"与"预算花完了"。
 
@@ -21,11 +26,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from .agent import build_master, drive_session
-from .loop import continue_session
-from .model import ModelClient, ScriptedClient
-from .permissions import PermissionPolicy
-from .runtime import AgentRuntime, reset_all
+from agent import build_master, drive_session
+from loop import continue_session
+from model import ModelClient, ScriptedClient
+from permissions import PermissionPolicy
+from runtime import AgentRuntime, reset_all
 
 EXIT_OK = 0
 EXIT_BUDGET = 2
@@ -51,10 +56,16 @@ DEFAULT_SESSION = "cli"
 def build_parser() -> argparse.ArgumentParser:
     """构造参数解析器。"""
     parser = argparse.ArgumentParser(
-        prog="zca",
+        prog="python src/main.py",
         description="基于 zoo-framework 的最小 coding agent。",
     )
     parser.add_argument("-p", "--prompt", help="单次执行的提示；省略则进入交互式会话")
+    parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="进入交互式会话（无参数时必需显式指定——不带参数的命令是脚手架默认行为）",
+    )
     parser.add_argument("--root", default=".", help="工作目录，默认当前目录")
     parser.add_argument("--budget", type=int, default=200_000, help="token 预算上限")
     parser.add_argument("--timeout", type=float, default=300.0, help="单轮墙钟上限（秒）")
@@ -214,7 +225,7 @@ def repl(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
     master: Any = None
 
     if not args.json:
-        out.write("zca 交互模式：输入任务，/exit 或 Ctrl-D 退出。\n")
+        out.write("交互模式：输入任务，/exit 或 Ctrl-D 退出。\n")
         out.flush()
 
     while True:
@@ -285,7 +296,10 @@ def main(
     try:
         if args.prompt:
             return run_once(args, out=stream_out)
-        return repl(args, out=stream_out, stdin=stream_in)
+        if args.interactive:
+            return repl(args, out=stream_out, stdin=stream_in)
+        stream_out.write('[error] 需要 -p "<提示>" 或 -i（交互式）\n')
+        return EXIT_ERROR
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         stream_out.write(f"[error] {exc}\n")
         return EXIT_ERROR

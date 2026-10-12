@@ -17,11 +17,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from ..agent import build_master, drive_session
-from ..loop import STOP_MODEL
-from ..model import ModelClient, ScriptedClient
-from ..permissions import PermissionPolicy
-from ..runtime import AgentRuntime, reset_all
+from agent import build_master, drive_session
+from loop import STOP_MODEL
+from model import ModelClient, ScriptedClient
+from permissions import PermissionPolicy
+from runtime import AgentRuntime, reset_all
+
 from .tasks import TASKS, EvalTask, get_task
 
 CHECK_TIMEOUT = 120.0

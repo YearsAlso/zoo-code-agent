@@ -6,7 +6,7 @@ import io
 import json
 from pathlib import Path
 
-from zoo_code_agent import cli
+import cli
 
 
 def _script_file(tmp_path: Path, payload) -> Path:
@@ -106,6 +106,7 @@ def test_repl_keeps_context_across_turns(tmp_path, sandbox) -> None:
 
     code = cli.main(
         [
+            "-i",
             "--script",
             str(script),
             "--root",
@@ -118,7 +119,7 @@ def test_repl_keeps_context_across_turns(tmp_path, sandbox) -> None:
     )
 
     assert code == cli.EXIT_OK
-    from zoo_code_agent.runtime import AgentRuntime
+    from runtime import AgentRuntime
 
     store = AgentRuntime().session("repl-test").store
     assert [record["content"] for record in store.by_role("user")] == ["第一个问题", "第二个问题"]
@@ -155,7 +156,7 @@ def test_default_policy_is_read_only(tmp_path, sandbox) -> None:
 
     assert code == cli.EXIT_OK
     assert not (sandbox / "x.txt").exists()
-    from zoo_code_agent.runtime import AgentRuntime
+    from runtime import AgentRuntime
 
     tool_records = AgentRuntime().session("cli").store.by_role("tool")
     assert "被拒绝" in tool_records[0]["content"]

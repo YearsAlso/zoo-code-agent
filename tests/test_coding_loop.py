@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import sys
 
-from zoo_code_agent.agent import build_master, drive_session
-from zoo_code_agent.loop import STOP_MODEL
-from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-from zoo_code_agent.permissions import PermissionPolicy
-from zoo_code_agent.runtime import AgentRuntime
+from agent import build_master, drive_session
+from loop import STOP_MODEL
+from model import ModelResponse, ScriptedClient, ToolCall
+from permissions import PermissionPolicy
+from runtime import AgentRuntime
 
 BROKEN = "def add(a, b):\n    return a - b\n"
 TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"

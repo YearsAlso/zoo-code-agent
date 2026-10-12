@@ -19,7 +19,7 @@
 - [x] C1 记录轮数、工具调用数、tokens、墙钟
 - [x] C2 汇总取中位数，失败原因逐条列出
 - [x] C3 结果写 JSON；CLI 打印 ASCII 表（避免控制台编码假失败）
-- [x] C4 `python -m zoo_code_agent.evals [--task ID] [--repeats N] [--real-provider]`
+- [x] C4 `python src/main.py --eval [--task ID] [--repeats N] [--real-provider]`
 
 ## D · 配置真相
 

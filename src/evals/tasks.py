@@ -16,7 +16,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from ..model import ModelResponse, ToolCall
+from model import ModelResponse, ToolCall
 
 PYTEST = f'"{sys.executable}" -B -m pytest -q'
 """验收与探查都用同一个解释器：避免 CI 里 `python` 指向别处导致假失败。

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from zoo_code_agent.runtime import reset_all
+from runtime import reset_all
 
 
 @pytest.fixture(autouse=True)

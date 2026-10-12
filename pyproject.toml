@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "zoo-code-agent"
 version = "0.0.1"
-description = "基于 zoo-framework 的最小 agent 消费者（演示 + 框架 Agent 线需求的验证消费方）"
+description = "基于 zoo-framework 的最小 coding agent（标准脚手架布局）"
 requires-python = ">=3.11"
 dependencies = [
     # 只消费已发布的框架版本，MUST NOT 跟随 dev 主干（见 openspec/changes/add-minimal-agent-loop/design.md D1）
@@ -19,14 +19,14 @@ dependencies = [
 anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8"]
 
-[project.scripts]
-zca = "zoo_code_agent.cli:main"
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/zoo_code_agent"]
+# 脚手架布局：src/ 就是项目根，入口是 src/main.py
+packages = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 按脚手架的方式导入：src/ 在路径上，模块是顶层模块（agent / loop / tools / ...）
+pythonpath = ["src"]
 addopts = "-q"
 
 [tool.ruff]

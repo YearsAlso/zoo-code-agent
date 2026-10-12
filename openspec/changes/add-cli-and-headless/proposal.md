@@ -9,9 +9,9 @@ Python 调 `build_master` / `drive_session`。参考基线 pi 提供三种入口
 
 **A 组 · 三种入口**
 
-- `zca`：交互式会话，同一个会话不断追加用户消息（复用 `add-session-resume` 的续跑能力）
-- `zca -p "..."`：无头单次执行，输出可管道
-- `zca --json`：事件流，每行一个 JSON 对象（`model_response` / `tool_result` / `stop` / `error`）
+- `python src/main.py -i`：交互式会话，同一个会话不断追加用户消息（复用 `add-session-resume` 的续跑能力）
+- `python src/main.py -p "..."`：无头单次执行，输出可管道
+- `python src/main.py --json`：事件流，每行一个 JSON 对象（`model_response` / `tool_result` / `stop` / `error`）
 
 **B 组 · 退出码**
 
@@ -40,7 +40,7 @@ Python 调 `build_master` / `drive_session`。参考基线 pi 提供三种入口
 
 ## Impact
 
-- 新增 `src/zoo_code_agent/cli.py` 与 `zca` 控制台入口（`pyproject.toml` 的 `[project.scripts]`）
+- 新增 `src/cli.py`，由 `src/main.py` 分流调用（曾经的 `zca` 控制台入口已随 `adopt-scaffold-layout` 移除）
 - `drive_session` 增加两个可选参数（默认行为不变）
 - 新增 `examples/smoke.json` 作为零密钥演示脚本
 - 不修改 zoo-framework

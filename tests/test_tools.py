@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from zoo_code_agent.permissions import PermissionPolicy
-from zoo_code_agent.tools import (
+from permissions import PermissionPolicy
+from tools import (
     IdempotencyLedger,
     MissingDescription,
     PathEscape,

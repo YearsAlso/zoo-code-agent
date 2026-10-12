@@ -26,7 +26,7 @@
 
 - 记录轮数、工具调用数、tokens、端到端墙钟；汇总取**中位数**
 - 结果落盘为 JSON，可被外部引用
-- 一条命令可跑：`python -m zoo_code_agent.evals`
+- 一条命令可跑：`python src/main.py --eval`
 
 **D 组 · 顺带修正的一处性能真相**
 
@@ -46,7 +46,7 @@
 
 ## Impact
 
-- 新增 `src/zoo_code_agent/evals/`（任务、执行器、CLI）与 `tests/test_evals.py`
+- 新增 `src/evals/`（任务、执行器、CLI）与 `tests/test_evals.py`
 - `config.json` 增加事件管道节拍配置；`bench/results/` 落一份基线结果
 - 不修改 zoo-framework
 

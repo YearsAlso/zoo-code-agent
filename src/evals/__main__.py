@@ -1,4 +1,7 @@
-"""命令行入口：``python -m zoo_code_agent.evals``。
+"""基准命令行入口。
+
+正规入口是 ``python src/main.py --eval``（它会转发到这里）；在 ``src/`` 目录下
+``python -m evals`` 等价。
 
 默认跑全部任务、用脚本化模型（零密钥），结果既打印成表也写成 JSON。
 """
@@ -18,7 +21,7 @@ DEFAULT_OUT = Path("bench/results/eval-scripted.json")
 def build_parser() -> argparse.ArgumentParser:
     """构造参数解析器。"""
     parser = argparse.ArgumentParser(
-        prog="python -m zoo_code_agent.evals",
+        prog="python src/main.py --eval",
         description="任务级验收基准：在临时沙箱里跑编码任务并记录成功率与成本。",
     )
     parser.add_argument(

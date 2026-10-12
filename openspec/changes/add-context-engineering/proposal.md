@@ -51,7 +51,7 @@
 
 ## Impact
 
-- 新增 `src/zoo_code_agent/context.py`；`loop.py` 的终止条件、消息构造与 `_model_turn` 相应调整
+- 新增 `src/context.py`；`loop.py` 的终止条件、消息构造与 `_model_turn` 相应调整
 - `providers.to_anthropic_messages` 增加同角色合并（对契约与脚本化路径无影响）
 - 新增仓库根 `AGENTS.md`
 - 不修改 zoo-framework

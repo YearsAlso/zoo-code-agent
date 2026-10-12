@@ -1,7 +1,18 @@
 {
+  "_exports": [],
   "log": {
     "path": "./logs",
     "level": "warning"
+  },
+  "worker": {
+    "runPolicy": "simple",
+    "pool": {
+      "size": 5,
+      "enabled": false
+    }
+  },
+  "demo": {
+    "greeting": "hello from config.json"
   },
   "stateMachine": {
     "picklePath": "./.zoo/zooStates.pic",
@@ -10,11 +21,5 @@
   "event": {
     "pushModelEnabled": true,
     "delay": 0.05
-  },
-  "worker": {
-    "pool": {
-      "size": 4,
-      "enable": false
-    }
   }
 }

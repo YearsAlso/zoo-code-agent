@@ -14,10 +14,10 @@ from typing import Any
 
 from zoo_framework.core import Master
 
-from .loop import make_agent_worker, register_tool_reactor, start_session
-from .model import ModelClient
-from .permissions import PermissionPolicy
-from .runtime import AgentRuntime
+from loop import make_agent_worker, register_tool_reactor, start_session
+from model import ModelClient
+from permissions import PermissionPolicy
+from runtime import AgentRuntime
 
 DEFAULT_BUDGET = 1000
 DEFAULT_SETTLE = 0.05

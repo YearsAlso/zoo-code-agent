@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-from zoo_code_agent.agent import build_master, drive_session
-from zoo_code_agent.loop import STOP_MODEL
-from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-from zoo_code_agent.permissions import PermissionPolicy
-from zoo_code_agent.runtime import AgentRuntime, reset_process_state_carriers
-from zoo_code_agent.tools import idempotency_key
+from agent import build_master, drive_session
+from loop import STOP_MODEL
+from model import ModelResponse, ScriptedClient, ToolCall
+from permissions import PermissionPolicy
+from runtime import AgentRuntime, reset_process_state_carriers
+from tools import idempotency_key
 
 
 def _run_to_completion(sandbox, session_id: str) -> None:

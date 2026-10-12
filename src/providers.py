@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from .model import (
+from model import (
     EXTRA_NAME,
     ModelError,
     ModelResponse,

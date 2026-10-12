@@ -1,31 +1,57 @@
 # zoo-code-agent
 
-基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的**最小 agent 消费者**，mini-claude-code 形态。
+基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的**最小 coding agent**，mini-claude-code 形态。
 
 ## 定位
 
+- **布局是标准脚手架形态**：`src/` 即项目根，`src/main.py` 是入口，
+  `src/{workers,conf,params,events}/` 对应框架的四个扩展点——`zfc --worker` 在本仓库里直接可用。
 - **不是框架的一部分**：本仓库只依赖 PyPI 上已发布的 `zoo-framework`（当前 `>=0.12,<0.13`），不修改框架。
 - **双重目的**：
   1. **演示** —— 说明怎么用框架搭一个基础 agent。
   2. **验证** —— 作为框架「Agent 线」（zoo-framework issue #32）的第一个真实消费方，把纸面需求变成可证伪的实测缺口。
 
+## 结构
+
+```
+src/
+├── main.py                 入口：无参数起调度器；-p 跑一次会话；--eval 跑基准
+├── workers/                Worker —— 框架的任务执行单元
+│   ├── agent_worker.py     在标准 Worker 里跑一条 agent 会话（跨进程，原因见文件内说明）
+│   └── sample_worker.py    脚手架自带的示例
+├── conf/demo_conf.py       @configure —— 启动钩子
+├── params/demo_params.py   @params —— 把 config.json 的值绑到类属性
+├── events/demo_event.py    @event —— 事件反应器
+├── agent.py  loop.py  model.py  providers.py  permissions.py
+├── runtime.py  session.py  tools.py  context.py  cli.py
+└── evals/                  任务级基准
+```
+
 ## 快速开始
 
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
-pytest                      # 100 用例，全部不需要 API 密钥
-python -c "from zoo_code_agent.agent import run; run()"   # 脚本化会话，Ctrl-C 退出
+pytest                      # 101 用例，全部不需要 API 密钥
+python src/main.py          # 起调度器跑示例 Worker（Ctrl-C 停止）
+python src/main.py -p "看看目录" --script examples/smoke.json --allow list_dir   # 零密钥会话
 ```
 
 用真实模型（需要 `ANTHROPIC_API_KEY`）：
 
 ```bash
 pip install -e ".[dev,anthropic]"
+python src/main.py -i       # 交互式会话
 ```
 
+也可以直接用引擎的库 API（脚手架布局里 `src/` 在路径上，模块是顶层模块）：
+
 ```python
-from zoo_code_agent.agent import build_master, drive_session
-from zoo_code_agent.providers import AnthropicClient
+import sys
+
+sys.path.insert(0, "src")
+
+from agent import build_master, drive_session
+from providers import AnthropicClient
 
 master = build_master(
     model=AnthropicClient(system="你是一个只读文件助手。"),
@@ -40,18 +66,23 @@ print(drive_session(master, "s1"))
 ## 命令行
 
 ```bash
-zca                                                              # 交互式会话（需要 ANTHROPIC_API_KEY）
-zca -p "让 tests 通过" --allow write_file,edit_file,run_shell     # 无头单次
-zca --json -p "让 tests 通过" --allow run_shell                   # 每行一个 JSON 事件
-zca -p "看看目录" --script examples/smoke.json --allow list_dir    # 零密钥演示（脚本化模型）
+python src/main.py                                                # 脚手架默认行为：起调度器、跑 Worker
+python src/main.py -i                                             # 交互式会话（需要 ANTHROPIC_API_KEY）
+python src/main.py -p "让 tests 通过" --allow write_file,edit_file,run_shell   # 无头单次
+python src/main.py --json -p "让 tests 通过" --allow run_shell     # 每行一个 JSON 事件
+python src/main.py -p "看看目录" --script examples/smoke.json --allow list_dir  # 零密钥演示
+python src/main.py --eval                                          # 任务级基准
 ```
+
+**不带参数时是脚手架的默认行为**（起 `Master`、注册 `src/workers/` 里的 Worker、常驻运行），
+不会进入交互式会话——交互式要显式 `-i`。
 
 **退出码**区分终止原因，脚本才能据此分支：`0` 完成 / `2` 预算耗尽 / `3` 截止期到达 /
 `4` 超时 / `5` 错误。
 
 **默认只读**：不做任何预授权时，写与执行类调用一律被拒绝。要让它改代码，显式给出
 `--allow`，或在可信环境用 `--approve-all`——交互式审批界面尚未实现，这一点如实写在
-[`permissions.py`](src/zoo_code_agent/permissions.py) 的模块说明里。
+[`src/permissions.py`](src/permissions.py) 的模块说明里。
 
 **流式是步骤级**：每个模型响应、每次工具结果出现即打印，不是 token 级流式——
 `ModelClient.complete` 一次性返回整条响应。
@@ -81,9 +112,9 @@ zca -p "看看目录" --script examples/smoke.json --allow list_dir    # 零密�
 ## 任务级基准：它能干什么，用数字说话
 
 ```bash
-python -m zoo_code_agent.evals                       # 全部任务，脚本化模型，零密钥
-python -m zoo_code_agent.evals --task bugfix-01 --repeats 3
-python -m zoo_code_agent.evals --real-provider       # 真实模型（需要 API 密钥）
+python src/main.py --eval                            # 全部任务，脚本化模型，零密钥
+python src/main.py --eval --task bugfix-01 --repeats 3
+python src/main.py --eval --real-provider            # 真实模型（需要 API 密钥）
 ```
 
 三个任务覆盖三类改动：修 bug（`bugfix-01`）、补实现（`feature-01`）、修空输入边界
@@ -201,7 +232,7 @@ python -m zoo_code_agent.evals --real-provider       # 真实模型（需要 API
   检索工具与权限门；端到端验收是「跑测试失败 → 读码 → 改码 → 跑测试通过」。
 - [`add-task-eval`](openspec/changes/add-task-eval/proposal.md)：任务级基准——三个任务、
   独立判定、成本指标与结果落盘。
-- [`add-cli-and-headless`](openspec/changes/add-cli-and-headless/proposal.md)：`zca` 交互式 /
+- [`add-cli-and-headless`](openspec/changes/add-cli-and-headless/proposal.md)：`python src/main.py` 交互式 /
   单次 / JSON 事件流三种入口，退出码区分终止原因，默认只读。
 - [`add-context-engineering`](openspec/changes/add-context-engineering/proposal.md)：项目指令注入、
   提示分层、输入侧记账与历史压缩；顺带修掉真实提供方路径上"多个工具结果不满足角色交替"的缺陷。

@@ -20,21 +20,11 @@ from .runtime import AgentRuntime
 DEFAULT_BUDGET = 1000
 DEFAULT_SETTLE = 0.05
 DEFAULT_TIMEOUT = 30.0
-"""推进一次会话的默认上限（秒）。
+"""推进一次会话的默认上限（秒）——真实模型调用可能耗时，故留出余量。
 
-不用「轮数」做上限：会话推进的时间尺度由**事件管道的节拍**决定，而不是由本仓库
-的循环次数决定，见 ``EVENT_PIPELINE_TICK_SECONDS``。
-"""
-
-EVENT_PIPELINE_TICK_SECONDS = 5.0
-"""事件管道推进的节拍下限。
-
-框架的 ``EventWorker.__init__`` 把 ``delay_time`` 硬编码为 5 秒：它排空一次通道后
-会在 ``run()`` 里睡满 5 秒才结算，此间一直算在飞、不会被再次派发。于是**每一次
-事件派发都要等下一个节拍**——一次带工具调用的会话因此要跑若干秒，而不是毫秒。
-
-这是本仓库跑真实产出时才发现的框架行为（见 README「跑真实产出发现的四件事」），
-不是我方实现的可调参数：`delay_time` 目前没有公开的配置入口。
+0.8.0 时代这个值必须覆盖「事件管道固定 5 秒节拍 × 工具调用次数」；0.12.0 起推模型
+（``event:pushModelEnabled``，见 config.json）让派发在毫秒级完成，这里的余量只留给
+真实模型的网络往返，不再留给框架节拍。
 """
 
 
@@ -48,6 +38,40 @@ def _ensure_persistence_dir() -> None:
     from zoo_framework.params import StateMachineParams
 
     Path(StateMachineParams.PICKLE_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+
+def _load_persisted_state() -> None:
+    """把落盘状态读回内存，且 MUST 发生在任何会话写入之前。
+
+    框架的 ``StateMachineWorker`` 在首次 ``_execute`` 时才读盘，而
+    ``load_state_machines`` 的恢复语义是**整表替换**（变更 ``fix-state-restore`` /
+    #72）。若先写用户消息再等 Worker 读盘，刚写入的记录会被整表替换掉——这个顺序
+    缺陷在 0.8.0 上永远看不出来，因为那时读盘是空操作。
+
+    在装配阶段主动读一次即可消除该竞态：``StateMachineWorker._load_state_machines``
+    随后会因 ``have_loaded()`` 为真而提前返回，全局只读盘一次。
+    """
+    from zoo_framework.core.persistence_scheduler import PicklePersistenceStrategy
+    from zoo_framework.params import StateMachineParams
+    from zoo_framework.statemachine import StateMachineManager
+    from zoo_framework.utils import FileUtils
+
+    manager = StateMachineManager()
+    if manager.have_loaded():
+        return
+
+    path = StateMachineParams.PICKLE_PATH
+    if not FileUtils.file_exists(path):
+        # 标记为已加载但保持空状态：否则 StateMachineWorker 仍会再走一次读盘分支。
+        manager.load_state_machines()
+        return
+
+    restored = PicklePersistenceStrategy().load(path)
+    try:
+        manager.load_state_machines(restored)
+    except TypeError:
+        # 存档不是 scope 映射（被外部改坏）：退回空状态，而不是带着坏状态继续。
+        manager.load_state_machines()
 
 
 def build_master(
@@ -73,6 +97,7 @@ def build_master(
         已注册 Agent 循环 Worker 的 ``Master``（尚未 run）。
     """
     _ensure_persistence_dir()
+    _load_persisted_state()
 
     runtime = AgentRuntime()
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
@@ -97,7 +122,7 @@ def drive_session(
     Args:
         master: 已装配的 ``Master``。
         session_id: 会话标识。
-        timeout: 墙钟上限（秒）。默认值已按事件管道节拍留出余量。
+        timeout: 墙钟上限（秒）。
         poll: 两次 ``execute_service`` 之间的间隔。
 
     Returns:
@@ -110,17 +135,25 @@ def drive_session(
     store = runtime.session(session_id).store
     deadline = time.monotonic() + timeout
 
-    while time.monotonic() < deadline:
-        master.waiter.execute_service()
-        time.sleep(poll)
-        if store.get("stop_reason"):
-            # 给已在飞的反应器留出写完最后一条观察的时间。
-            time.sleep(poll * 5)
-            return {
-                "stop_reason": store.get("stop_reason"),
-                "records": len(store.records()),
-                "tokens_spent": store.get("tokens_spent", 0),
-            }
+    try:
+        while time.monotonic() < deadline:
+            master.waiter.execute_service()
+            time.sleep(poll)
+            if store.get("stop_reason"):
+                # stop_reason 只在 pending 全部完成之后才由 AgentLoopWorker 写入，
+                # 因此此刻记录已经落齐——0.8.0 时代那段 5 倍于 poll 的等待是为
+                # 秒级事件节拍兜底的，现在只剩一个 tick 的余量给日志与观察者。
+                time.sleep(poll)
+                return {
+                    "stop_reason": store.get("stop_reason"),
+                    "records": len(store.records()),
+                    "tokens_spent": store.get("tokens_spent", 0),
+                }
+    finally:
+        # 优雅停机既是框架的卖点，也是落盘的确定性来源：shutdown() 会 unregister
+        # 全部 Worker，StateMachineWorker 的 destroy 钩子在此写出最后一版状态。
+        # 没有这一步，「重启续跑」只能靠下一次调度轮次的碰运气式保存。
+        master.shutdown()
 
     raise TimeoutError(
         f"会话 {session_id!r} 在 {timeout}s 内未停止；当前 pending={store.get('pending')!r}"

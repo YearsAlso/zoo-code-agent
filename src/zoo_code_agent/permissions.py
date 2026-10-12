@@ -73,7 +73,9 @@ class PermissionPolicy:
         self._allowed = frozenset(allowed)
         self._approver = approver
 
-    def assess(self, tool_name: str, arguments: Mapping[str, Any], *, requires_approval: bool) -> PermissionVerdict:
+    def assess(
+        self, tool_name: str, arguments: Mapping[str, Any], *, requires_approval: bool
+    ) -> PermissionVerdict:
         """判定一次工具调用是否放行。"""
         if not requires_approval:
             return PermissionVerdict(True, "只读操作，无需审批")

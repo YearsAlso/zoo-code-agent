@@ -20,6 +20,9 @@
 - 写 / 执行类工具 MUST 声明 `requires_approval=True`；权限门失败关闭，没有审批者就拒绝。
 - 工具集 MUST NOT 提供代码求值（`eval` / `exec`）——那是绕过权限门的后门。
 - 行为变更 MUST 同步更新 `openspec/changes/<id>/` 的规格与 README；`openspec validate <id> --strict` 必须通过。
+- 变更交付后 MUST 归档（`openspec archive <id> -y`）：delta 合并进 `openspec/specs/`，
+  原变更移入 `openspec/changes/archive/`。**`openspec/specs/` 才是权威行为规格**，
+  改行为时先读它，不要只读归档里的 delta。
 - 报告结论时 MUST 区分「实测」与「推断」；拿不到证据就写"未测量"。
 
 ## 验证命令

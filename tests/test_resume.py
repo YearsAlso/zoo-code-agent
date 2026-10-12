@@ -1,6 +1,6 @@
 """重启续跑（E4）：读回既有记录、不重复副作用、未完成的调用被重新派发。
 
-对应 openspec/changes/add-minimal-agent-loop 里因框架 0.8.0 缺陷被移出的 E2/E3/E4。
+对应 `openspec/specs/session-resume/spec.md`——即当初因框架 0.8.0 缺陷被移出的 E2/E3/E4。
 框架侧已由变更 ``fix-state-restore``（#72）修好，本文件是该 Requirement 的验收。
 """
 

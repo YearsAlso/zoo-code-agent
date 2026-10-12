@@ -1,6 +1,6 @@
 """布局不变量：把"标准脚手架形态"交给 CI 守，而不是靠人记得。
 
-对应 `openspec/changes/adopt-scaffold-layout` 的规格。最后一条尤其重要——
+对应 [`openspec/specs/project-layout/spec.md`](../openspec/specs/project-layout/spec.md) 的规格。最后一条尤其重要——
 ``zfc --worker`` 靠**字面量标记**找插入点：标记在文件里出现两次，它就会插到第一处，
 文件是生成了，但 Worker 从不执行（本仓库第一版真的这么踩过：标记被我写进了模块文档字符串）。
 """

@@ -93,8 +93,8 @@ python src/main.py --eval                                          # 任务级�
 
 ## 一次会话由什么组成
 
-`agent-loop` / `model-client` / `tool-invocation` / `session-persistence` 四个能力，规格在
-`openspec/changes/add-minimal-agent-loop/`。要点：
+`agent-loop` / `model-client` / `tool-invocation` / `session-persistence` 四个能力，
+**权威规格在 [`openspec/specs/`](openspec/specs/)**（`<能力>/spec.md`，MUST/SHALL 条款 + 场景）。要点：
 
 - **循环**：`BaseWorker` 子类，`is_loop` 为真，一次 `_execute` 推进一步；三类终止条件
   （预算 / 截止期 / 模型不再请求工具）命中即止。
@@ -104,7 +104,7 @@ python src/main.py --eval                                          # 任务级�
   观察回灌给模型。**默认配置下 agent 只能只读**——要让它改代码，必须显式给出预授权或审批者。
 - **投递**：工具调用经框架事件管道派发，不由 Worker 体内直调。
 - **状态**：会话记录与幂等账本经框架状态机落盘，**进程重启后可续跑**（见
-  [`add-session-resume`](openspec/changes/add-session-resume/proposal.md)）。
+  [`session-resume`](openspec/specs/session-resume/spec.md)）。
 - **上下文**：系统提示分层（基础行为 → 项目指令 → 可用工具），工作目录里的 `AGENTS.md` /
   `CLAUDE.md` 会自动注入；历史超限时把中间那段折叠成**一条摘要观察**（保留了目标、改过的文件、
   跑过的命令），**存档不动**；预算按「输入估算 + 输出实报」计。
@@ -226,17 +226,20 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 
 ## 状态
 
-- `add-minimal-agent-loop`：最小环已实现；因框架 #72 被移出的重启续跑（E2/E3/E4）已由
-  [`add-session-resume`](openspec/changes/add-session-resume/proposal.md) 回填。
-- [`add-coding-tools`](openspec/changes/add-coding-tools/proposal.md)：补齐写 / 编辑 / 执行 /
-  检索工具与权限门；端到端验收是「跑测试失败 → 读码 → 改码 → 跑测试通过」。
-- [`add-task-eval`](openspec/changes/add-task-eval/proposal.md)：任务级基准——三个任务、
-  独立判定、成本指标与结果落盘。
-- [`add-cli-and-headless`](openspec/changes/add-cli-and-headless/proposal.md)：`python src/main.py` 交互式 /
-  单次 / JSON 事件流三种入口，退出码区分终止原因，默认只读。
-- [`add-context-engineering`](openspec/changes/add-context-engineering/proposal.md)：项目指令注入、
-  提示分层、输入侧记账与历史压缩；顺带修掉真实提供方路径上"多个工具结果不满足角色交替"的缺陷。
-- 测试：**100 条**用例全绿，`ruff` 通过，六个变更 `openspec validate --strict` 均通过。
+七个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
+[`openspec/specs/`](openspec/specs/) 下的 11 份能力规格——那才是权威行为规格。
+
+| 变更 | 交付 | 对应能力 |
+|---|---|---|
+| `add-minimal-agent-loop` | 最小环（循环、模型契约、工具契约、同进程持久化） | `agent-loop` / `model-client` / `tool-invocation` / `session-persistence` |
+| `add-session-resume` | 重启续跑（框架 #72/#73 修复后回填） | `session-resume` |
+| `add-coding-tools` | 写 / 编辑 / 执行 / 检索工具与权限门 | `coding-tools` / `permission-gate` |
+| `add-task-eval` | 任务级基准（独立判定、成本指标、JSON 落盘） | `task-eval` |
+| `add-cli-and-headless` | 交互 / 单次 / JSON 事件流与退出码语义 | `cli-interface` |
+| `add-context-engineering` | 指令注入、提示分层、输入侧记账、历史压缩 | `context-engineering` |
+| `adopt-scaffold-layout` | 整体改造为标准脚手架布局 | `project-layout` |
+
+- 测试：**107 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，基线规格 `--strict` 校验通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 
 ## 与框架仓库的关系

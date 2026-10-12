@@ -29,6 +29,8 @@
 - [x] D3 `python src/main.py -p ... --json` 与 `--eval` 实跑通过
 - [x] D4 全量用例通过；`ruff check` / `ruff format --check` 通过
 - [x] D5 `openspec validate adopt-scaffold-layout --strict` 通过
+- [x] D6 `tests/test_layout.py`：把布局不变量固化为 CI 断言（入口存在、四个扩展点齐备、
+  标记各出现恰好一次、无旧包名前缀、不声明控制台入口）
 
 ## E · 文档
 

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +121,8 @@ def drive_session(
     *,
     timeout: float = DEFAULT_TIMEOUT,
     poll: float = DEFAULT_SETTLE,
+    shutdown: bool = True,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """推进会话直到停止或超时。
 
@@ -128,6 +131,10 @@ def drive_session(
         session_id: 会话标识。
         timeout: 墙钟上限（秒）。
         poll: 两次 ``execute_service`` 之间的间隔。
+        shutdown: 结束时是否停机。交互式多轮 MUST 传 ``False``——停机后 Worker 已被注销，
+            同一进程里无法再推进；调用方应在最后一轮后自行 ``master.shutdown()``。
+        on_event: 事件回调。每出现一条新记录就回调一次，用于把会话过程**当场**呈现给
+            调用方（命令行、JSON 事件流），而不是等等到全部结束才一次性打印。
 
     Returns:
         终止状态摘要，含 ``stop_reason`` 与记录条数。
@@ -138,16 +145,21 @@ def drive_session(
     runtime = AgentRuntime()
     store = runtime.session(session_id).store
     deadline = time.monotonic() + timeout
+    seen = len(store.records())
 
     try:
         while time.monotonic() < deadline:
             master.waiter.execute_service()
             time.sleep(poll)
+            seen = _emit_new_records(store, seen, on_event)
             if store.get("stop_reason"):
                 # stop_reason 只在 pending 全部完成之后才由 AgentLoopWorker 写入，
                 # 因此此刻记录已经落齐——0.8.0 时代那段 5 倍于 poll 的等待是为
                 # 秒级事件节拍兜底的，现在只剩一个 tick 的余量给日志与观察者。
                 time.sleep(poll)
+                _emit_new_records(store, seen, on_event)
+                if on_event is not None:
+                    on_event({"type": "stop", "reason": store.get("stop_reason")})
                 return {
                     "stop_reason": store.get("stop_reason"),
                     "records": len(store.records()),
@@ -157,11 +169,47 @@ def drive_session(
         # 优雅停机既是框架的卖点，也是落盘的确定性来源：shutdown() 会 unregister
         # 全部 Worker，StateMachineWorker 的 destroy 钩子在此写出最后一版状态。
         # 没有这一步，「重启续跑」只能靠下一次调度轮次的碰运气式保存。
-        master.shutdown()
+        if shutdown:
+            master.shutdown()
 
     raise TimeoutError(
         f"会话 {session_id!r} 在 {timeout}s 内未停止；当前 pending={store.get('pending')!r}"
     )
+
+
+def _emit_new_records(store: Any, seen: int, on_event: Callable[[dict[str, Any]], None] | None) -> int:
+    """把新出现的会话记录转成事件回调出去；返回已处理到的记录条数。
+
+    事件类型取自记录本身（``user`` / ``assistant`` / ``tool``），因此不需要在框架内部埋点，
+    也不会因为实现变化而漂移。
+    """
+    records = store.records()
+    if on_event is None:
+        return len(records)
+    for record in records[seen:]:
+        role = record.get("role")
+        if role == "assistant":
+            on_event(
+                {
+                    "type": "model_response",
+                    "text": record.get("content", ""),
+                    "tool_calls": [
+                        {"call_id": call["call_id"], "name": call["name"]}
+                        for call in record.get("tool_calls", [])
+                    ],
+                }
+            )
+        elif role == "tool":
+            on_event(
+                {
+                    "type": "tool_result",
+                    "name": record.get("name"),
+                    "content": record.get("content", ""),
+                }
+            )
+        elif role == "user":
+            on_event({"type": "user", "text": record.get("content", "")})
+    return len(records)
 
 
 def run() -> None:  # pragma: no cover - 需要真实进程与 Ctrl-C

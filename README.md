@@ -13,7 +13,7 @@
 
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
-pytest                      # 79 用例，全部不需要 API 密钥
+pytest                      # 86 用例，全部不需要 API 密钥
 python -c "from zoo_code_agent.agent import run; run()"   # 脚本化会话，Ctrl-C 退出
 ```
 
@@ -36,6 +36,25 @@ master = build_master(
 )
 print(drive_session(master, "s1"))
 ```
+
+## 命令行
+
+```bash
+zca                                                              # 交互式会话（需要 ANTHROPIC_API_KEY）
+zca -p "让 tests 通过" --allow write_file,edit_file,run_shell     # 无头单次
+zca --json -p "让 tests 通过" --allow run_shell                   # 每行一个 JSON 事件
+zca -p "看看目录" --script examples/smoke.json --allow list_dir    # 零密钥演示（脚本化模型）
+```
+
+**退出码**区分终止原因，脚本才能据此分支：`0` 完成 / `2` 预算耗尽 / `3` 截止期到达 /
+`4` 超时 / `5` 错误。
+
+**默认只读**：不做任何预授权时，写与执行类调用一律被拒绝。要让它改代码，显式给出
+`--allow`，或在可信环境用 `--approve-all`——交互式审批界面尚未实现，这一点如实写在
+[`permissions.py`](src/zoo_code_agent/permissions.py) 的模块说明里。
+
+**流式是步骤级**：每个模型响应、每次工具结果出现即打印，不是 token 级流式——
+`ModelClient.complete` 一次性返回整条响应。
 
 ## 一次会话由什么组成
 
@@ -175,7 +194,9 @@ python -m zoo_code_agent.evals --real-provider       # 真实模型（需要 API
   检索工具与权限门；端到端验收是「跑测试失败 → 读码 → 改码 → 跑测试通过」。
 - [`add-task-eval`](openspec/changes/add-task-eval/proposal.md)：任务级基准——三个任务、
   独立判定、成本指标与结果落盘。
-- 测试：**79 条**用例全绿，`ruff` 通过，四个变更 `openspec validate --strict` 均通过。
+- [`add-cli-and-headless`](openspec/changes/add-cli-and-headless/proposal.md)：`zca` 交互式 /
+  单次 / JSON 事件流三种入口，退出码区分终止原因，默认只读。
+- 测试：**86 条**用例全绿，`ruff` 通过，五个变更 `openspec validate --strict` 均通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 
 ## 与框架仓库的关系

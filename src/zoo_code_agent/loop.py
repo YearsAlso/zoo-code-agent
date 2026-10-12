@@ -68,6 +68,19 @@ def _requeue_unfinished(store: SessionStore) -> None:
         store.set("pending", pending)
 
 
+def continue_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
+    """在**既有**会话上追加一条用户消息，并清掉终止状态，使循环可以继续推进。
+
+    交互式入口（``zca``）用它实现多轮：一轮结束后会话记录与账本都还在，下一轮只是再追加
+    一条用户消息。MUST NOT 新建会话——那会把上下文丢掉，「REPL」也就不是 REPL 了。
+    """
+    state = runtime.session(session_id)
+    store = state.store
+    turn = len(store.by_role("assistant"))
+    store.append(role="user", content=prompt, turn=turn)
+    store.set("stop_reason", None)
+
+
 def termination_reason(runtime: AgentRuntime, session_id: str) -> str | None:
     """当前是否已命中终止条件；未命中返回 ``None``。"""
     store = runtime.session(session_id).store

@@ -56,6 +56,10 @@ zca -p "看看目录" --script examples/smoke.json --allow list_dir    # 零密�
 **流式是步骤级**：每个模型响应、每次工具结果出现即打印，不是 token 级流式——
 `ModelClient.complete` 一次性返回整条响应。
 
+想看**标准 `zfc --create` 项目**长什么样（以及怎么在标准 Worker 里跑一条 agent 会话），
+见 [`examples/scaffold-demo/`](examples/scaffold-demo/)——那个目录是由脚手架命令原样生成、
+再用 `zfc --worker` 加了一个 agent Worker 的结果。
+
 ## 一次会话由什么组成
 
 `agent-loop` / `model-client` / `tool-invocation` / `session-persistence` 四个能力，规格在

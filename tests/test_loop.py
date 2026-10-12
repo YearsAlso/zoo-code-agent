@@ -7,7 +7,7 @@ from typing import Any
 
 from zoo_framework.event.event_channel_manager import EventChannelManager
 
-from zoo_code_agent.loop import (
+from loop import (
     STOP_BUDGET,
     STOP_DEADLINE,
     STOP_MODEL,
@@ -17,8 +17,8 @@ from zoo_code_agent.loop import (
     start_session,
     termination_reason,
 )
-from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-from zoo_code_agent.runtime import AgentRuntime
+from model import ModelResponse, ScriptedClient, ToolCall
+from runtime import AgentRuntime
 
 
 class _Request:

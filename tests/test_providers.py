@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from zoo_code_agent.model import (
+from model import (
     EXTRA_NAME,
     Message,
     ModelResponse,
@@ -18,7 +18,7 @@ from zoo_code_agent.model import (
     ToolCall,
     ToolDeclaration,
 )
-from zoo_code_agent.providers import (
+from providers import (
     AnthropicClient,
     from_anthropic_response,
     to_anthropic_messages,

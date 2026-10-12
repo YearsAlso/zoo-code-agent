@@ -12,7 +12,7 @@ from typing import Any
 from zoo_framework.reactor.event_reactor import EventReactor
 from zoo_framework.reactor.event_retry_strategy import EventRetryStrategy
 
-from zoo_code_agent.tools import IdempotencyLedger, idempotency_key
+from tools import IdempotencyLedger, idempotency_key
 
 PAYLOAD: dict[str, Any] = {"query": "deep-thought"}
 RETRY_ATTEMPTS = 3

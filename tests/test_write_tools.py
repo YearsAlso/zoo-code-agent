@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from zoo_code_agent.tools import (
+from tools import (
     MAX_TOOL_OUTPUT,
     PathEscape,
     ToolError,

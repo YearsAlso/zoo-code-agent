@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from zoo_code_agent.runtime import AgentRuntime
-from zoo_code_agent.session import SessionStore
-from zoo_code_agent.tools import idempotency_key
+from runtime import AgentRuntime
+from session import SessionStore
+from tools import idempotency_key
 
 
 def test_records_come_back_in_write_order() -> None:

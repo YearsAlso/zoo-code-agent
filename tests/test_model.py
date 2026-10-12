@@ -6,7 +6,7 @@ import socket
 
 import pytest
 
-from zoo_code_agent.model import (
+from model import (
     EXTRA_NAME,
     Message,
     ModelClient,

@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from zoo_code_agent.agent import build_master, drive_session
-from zoo_code_agent.loop import STOP_MODEL
-from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-from zoo_code_agent.permissions import PermissionPolicy
-from zoo_code_agent.runtime import AgentRuntime
+from agent import build_master, drive_session
+from loop import STOP_MODEL
+from model import ModelResponse, ScriptedClient, ToolCall
+from permissions import PermissionPolicy
+from runtime import AgentRuntime
 
 
 def test_scripted_session_runs_end_to_end_through_master(sandbox) -> None:

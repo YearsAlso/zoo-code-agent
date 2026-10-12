@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from zoo_code_agent.agent import build_master, drive_session
-from zoo_code_agent.loop import STOP_MODEL
-from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-from zoo_code_agent.permissions import PermissionPolicy
-from zoo_code_agent.runtime import AgentRuntime
-from zoo_code_agent.tools import IdempotencyLedger, default_registry
+from agent import build_master, drive_session
+from loop import STOP_MODEL
+from model import ModelResponse, ScriptedClient, ToolCall
+from permissions import PermissionPolicy
+from runtime import AgentRuntime
+from tools import IdempotencyLedger, default_registry
 
 
 def test_read_tools_never_need_approval() -> None:

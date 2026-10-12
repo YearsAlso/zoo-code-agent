@@ -5,7 +5,7 @@
   "median_turns": 5,
   "median_tool_calls": 4,
   "median_tokens": 40,
-  "median_wall_clock_s": 1.902,
+  "median_wall_clock_s": 1.8,
   "failures": [],
   "runs": [
     {
@@ -16,7 +16,7 @@
       "turns": 5,
       "tool_calls": 4,
       "tokens": 40,
-      "wall_clock": 1.902,
+      "wall_clock": 1.8,
       "check_exit_code": 0,
       "tampered_test_files": [],
       "check_output": ".                                                                        [100%]\n1 passed in 0.01s"
@@ -29,7 +29,7 @@
       "turns": 5,
       "tool_calls": 4,
       "tokens": 40,
-      "wall_clock": 1.134,
+      "wall_clock": 1.133,
       "check_exit_code": 0,
       "tampered_test_files": [],
       "check_output": "..                                                                       [100%]\n2 passed in 0.01s"
@@ -42,7 +42,7 @@
       "turns": 5,
       "tool_calls": 4,
       "tokens": 40,
-      "wall_clock": 2.004,
+      "wall_clock": 1.849,
       "check_exit_code": 0,
       "tampered_test_files": [],
       "check_output": "..                                                                       [100%]\n2 passed in 0.01s"

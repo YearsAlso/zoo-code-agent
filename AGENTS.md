@@ -1,12 +1,17 @@
 # AGENTS.md — zoo-code-agent
 
-给在本仓库里工作的编码 agent 的说明。`zca` 会把本文件读进系统提示（见
-`src/zoo_code_agent/context.py` 的 `load_project_instructions`）——**这份文件既是说明，也是该功能的真实用例**。
+给在本仓库里工作的编码 agent 的说明。agent 会话启动时会把本文件读进系统提示（见
+`src/context.py` 的 `load_project_instructions`）——**这份文件既是说明，也是该功能的真实用例**。
 
 ## 这是什么
 
 基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的最小 coding agent：
 工具调用经框架事件管道派发，会话记录与幂等账本落盘，**进程重启后可续跑**。
+
+**布局是标准脚手架形态**：`src/` 即项目根，`src/main.py` 是入口，
+`src/{workers,conf,params,events}/` 对应框架的四个扩展点；引擎各模块平铺在 `src/` 下，
+导入一律按顶层模块写（`from agent import ...`，不是 `from zoo_code_agent...`）。
+改 `src/main.py` 时 MUST NOT 删除 `# zfc:worker-imports` / `# zfc:worker-registrations` 两个标记。
 
 ## 硬约定
 
@@ -15,6 +20,9 @@
 - 写 / 执行类工具 MUST 声明 `requires_approval=True`；权限门失败关闭，没有审批者就拒绝。
 - 工具集 MUST NOT 提供代码求值（`eval` / `exec`）——那是绕过权限门的后门。
 - 行为变更 MUST 同步更新 `openspec/changes/<id>/` 的规格与 README；`openspec validate <id> --strict` 必须通过。
+- 变更交付后 MUST 归档（`openspec archive <id> -y`）：delta 合并进 `openspec/specs/`，
+  原变更移入 `openspec/changes/archive/`。**`openspec/specs/` 才是权威行为规格**，
+  改行为时先读它，不要只读归档里的 delta。
 - 报告结论时 MUST 区分「实测」与「推断」；拿不到证据就写"未测量"。
 
 ## 验证命令
@@ -23,5 +31,5 @@
 pytest                                   # 全量用例，不需要密钥
 ruff check src tests bench               # 静态检查
 openspec validate <change-id> --strict   # 规格校验
-python -m zoo_code_agent.evals           # 任务级基准
+python src/main.py --eval                # 任务级基准
 ```

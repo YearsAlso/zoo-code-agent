@@ -10,8 +10,8 @@ import dataclasses
 import json
 from pathlib import Path
 
-from zoo_code_agent.evals import TASKS, get_task, run_all, run_task
-from zoo_code_agent.model import ModelResponse, ToolCall
+from evals import TASKS, get_task, run_all, run_task
+from model import ModelResponse, ToolCall
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

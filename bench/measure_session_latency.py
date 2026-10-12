@@ -14,13 +14,17 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 import time
 from pathlib import Path
 
-from zoo_code_agent.agent import build_master, drive_session
-from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-from zoo_code_agent.runtime import AgentRuntime, reset_all
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+"""脚手架布局里模块平铺在 ``src/`` 下；脚本直接运行时需要自己把它放上路径。"""
+
+from agent import build_master, drive_session  # noqa: E402  路径注入必须先于导入
+from model import ModelResponse, ScriptedClient, ToolCall  # noqa: E402
+from runtime import AgentRuntime, reset_all  # noqa: E402
 
 REPEATS = 2
 """每个模式跑几次。关闭推模型时每次至少等一个 5 秒节拍，故不宜取大。"""
@@ -68,7 +72,10 @@ def main() -> None:
         (root / "notes.txt").write_text("hello zoo\n", encoding="utf-8")
 
         for label, enabled in (("push_model=on", True), ("push_model=off (0.8.0-like)", False)):
+            # 0.8.0 的行为 = 没有推模型 + 固定 5 秒节拍。只关推模型是不够的：本项目把
+            # event:delay 调小过，那样对照出来的差距会缩水成 1.5x，失去"当年为什么慢"的意义。
             EventParams.PUSH_MODEL_ENABLED = enabled
+            EventParams.EVENT_DELAY_TIME = 0.05 if enabled else 5
             samples = [_run_once(root, f"bench-{enabled}-{i}") for i in range(REPEATS)]
             results[label] = samples
             print(f"{label:28s} " + "  ".join(f"{s * 1000:8.1f} ms" for s in samples))

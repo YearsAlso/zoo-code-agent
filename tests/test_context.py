@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 
-from zoo_code_agent.context import (
+from context import (
     COMPACT_CHAR_THRESHOLD,
     compact_view,
     compose_system_prompt,
@@ -172,11 +172,11 @@ def test_summary_handles_a_history_without_files_or_commands() -> None:
 
 def test_loop_uses_the_compacted_view(monkeypatch, sandbox) -> None:
     """集成点：循环确实按压缩后的视图请求模型，而存档记录保持完整。"""
-    from zoo_code_agent import loop as loop_module
-    from zoo_code_agent.agent import build_master, drive_session
-    from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
-    from zoo_code_agent.permissions import PermissionPolicy
-    from zoo_code_agent.runtime import AgentRuntime
+    import loop as loop_module
+    from agent import build_master, drive_session
+    from model import ModelResponse, ScriptedClient, ToolCall
+    from permissions import PermissionPolicy
+    from runtime import AgentRuntime
 
     monkeypatch.setattr(
         loop_module, "compact_view", functools.partial(compact_view, char_threshold=10)

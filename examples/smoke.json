@@ -1,0 +1,10 @@
+[
+  {
+    "text": "我先看看当前目录。",
+    "tokens": 5,
+    "tool_calls": [
+      {"call_id": "c1", "name": "list_dir", "arguments": {"path": "."}}
+    ]
+  },
+  {"text": "目录看完了。", "tokens": 5}
+]

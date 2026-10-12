@@ -13,7 +13,7 @@
 
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
-pytest                      # 79 用例，全部不需要 API 密钥
+pytest                      # 100 用例，全部不需要 API 密钥
 python -c "from zoo_code_agent.agent import run; run()"   # 脚本化会话，Ctrl-C 退出
 ```
 
@@ -37,6 +37,25 @@ master = build_master(
 print(drive_session(master, "s1"))
 ```
 
+## 命令行
+
+```bash
+zca                                                              # 交互式会话（需要 ANTHROPIC_API_KEY）
+zca -p "让 tests 通过" --allow write_file,edit_file,run_shell     # 无头单次
+zca --json -p "让 tests 通过" --allow run_shell                   # 每行一个 JSON 事件
+zca -p "看看目录" --script examples/smoke.json --allow list_dir    # 零密钥演示（脚本化模型）
+```
+
+**退出码**区分终止原因，脚本才能据此分支：`0` 完成 / `2` 预算耗尽 / `3` 截止期到达 /
+`4` 超时 / `5` 错误。
+
+**默认只读**：不做任何预授权时，写与执行类调用一律被拒绝。要让它改代码，显式给出
+`--allow`，或在可信环境用 `--approve-all`——交互式审批界面尚未实现，这一点如实写在
+[`permissions.py`](src/zoo_code_agent/permissions.py) 的模块说明里。
+
+**流式是步骤级**：每个模型响应、每次工具结果出现即打印，不是 token 级流式——
+`ModelClient.complete` 一次性返回整条响应。
+
 ## 一次会话由什么组成
 
 `agent-loop` / `model-client` / `tool-invocation` / `session-persistence` 四个能力，规格在
@@ -51,6 +70,9 @@ print(drive_session(master, "s1"))
 - **投递**：工具调用经框架事件管道派发，不由 Worker 体内直调。
 - **状态**：会话记录与幂等账本经框架状态机落盘，**进程重启后可续跑**（见
   [`add-session-resume`](openspec/changes/add-session-resume/proposal.md)）。
+- **上下文**：系统提示分层（基础行为 → 项目指令 → 可用工具），工作目录里的 `AGENTS.md` /
+  `CLAUDE.md` 会自动注入；历史超限时把中间那段折叠成**一条摘要观察**（保留了目标、改过的文件、
+  跑过的命令），**存档不动**；预算按「输入估算 + 输出实报」计。
 
 ## 任务级基准：它能干什么，用数字说话
 
@@ -175,7 +197,11 @@ python -m zoo_code_agent.evals --real-provider       # 真实模型（需要 API
   检索工具与权限门；端到端验收是「跑测试失败 → 读码 → 改码 → 跑测试通过」。
 - [`add-task-eval`](openspec/changes/add-task-eval/proposal.md)：任务级基准——三个任务、
   独立判定、成本指标与结果落盘。
-- 测试：**79 条**用例全绿，`ruff` 通过，四个变更 `openspec validate --strict` 均通过。
+- [`add-cli-and-headless`](openspec/changes/add-cli-and-headless/proposal.md)：`zca` 交互式 /
+  单次 / JSON 事件流三种入口，退出码区分终止原因，默认只读。
+- [`add-context-engineering`](openspec/changes/add-context-engineering/proposal.md)：项目指令注入、
+  提示分层、输入侧记账与历史压缩；顺带修掉真实提供方路径上"多个工具结果不满足角色交替"的缺陷。
+- 测试：**100 条**用例全绿，`ruff` 通过，六个变更 `openspec validate --strict` 均通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 
 ## 与框架仓库的关系

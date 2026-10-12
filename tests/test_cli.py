@@ -1,0 +1,201 @@
+"""命令行入口：三种模式、退出码映射与多轮上下文。"""
+
+from __future__ import annotations
+
+import io
+import json
+from pathlib import Path
+
+from zoo_code_agent import cli
+
+
+def _script_file(tmp_path: Path, payload) -> Path:
+    path = tmp_path / "script.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+ONE_TOOL_CALL = [
+    {
+        "text": "先看看。",
+        "tokens": 5,
+        "tool_calls": [{"call_id": "c1", "name": "list_dir", "arguments": {"path": "."}}],
+    },
+    {"text": "看完了。", "tokens": 5},
+]
+
+
+def test_run_once_returns_zero_on_model_stopped(tmp_path, sandbox) -> None:
+    out = io.StringIO()
+
+    code = cli.main(
+        [
+            "-p",
+            "看看目录",
+            "--script",
+            str(_script_file(tmp_path, ONE_TOOL_CALL)),
+            "--root",
+            str(sandbox),
+            "--allow",
+            "list_dir",
+        ],
+        out=out,
+    )
+
+    assert code == cli.EXIT_OK
+    assert "list_dir" in out.getvalue()
+
+
+def test_budget_exhaustion_maps_to_its_own_exit_code(tmp_path, sandbox) -> None:
+    """退出码必须能区分终止原因——否则脚本无法判断"干完了"还是"钱花完了"。"""
+    code = cli.main(
+        [
+            "-p",
+            "看看目录",
+            "--script",
+            str(_script_file(tmp_path, ONE_TOOL_CALL)),
+            "--root",
+            str(sandbox),
+            "--allow",
+            "list_dir",
+            "--budget",
+            "1",
+        ],
+        out=io.StringIO(),
+    )
+
+    assert code == cli.EXIT_BUDGET
+
+
+def test_json_mode_emits_one_event_per_line(tmp_path, sandbox) -> None:
+    out = io.StringIO()
+
+    code = cli.main(
+        [
+            "-p",
+            "看看目录",
+            "--script",
+            str(_script_file(tmp_path, ONE_TOOL_CALL)),
+            "--root",
+            str(sandbox),
+            "--allow",
+            "list_dir",
+            "--json",
+        ],
+        out=out,
+    )
+
+    assert code == cli.EXIT_OK
+    lines = [line for line in out.getvalue().splitlines() if line.strip()]
+    events = [json.loads(line) for line in lines]
+    kinds = [event["type"] for event in events]
+    assert kinds == ["model_response", "tool_result", "model_response", "stop"]
+    assert events[-1]["reason"] == "model_stopped"
+
+
+def test_repl_keeps_context_across_turns(tmp_path, sandbox) -> None:
+    """第二轮 MUST 复用同一会话：记录里两条用户消息、四条助手消息。"""
+    script = _script_file(
+        tmp_path,
+        [
+            {"text": "第一轮回答。", "tokens": 5},
+            {"text": "第二轮回答。", "tokens": 5},
+        ],
+    )
+    stdin = io.StringIO("第一个问题\n第二个问题\n/exit\n")
+
+    code = cli.main(
+        [
+            "--script",
+            str(script),
+            "--root",
+            str(sandbox),
+            "--session",
+            "repl-test",
+        ],
+        out=io.StringIO(),
+        stdin=stdin,
+    )
+
+    assert code == cli.EXIT_OK
+    from zoo_code_agent.runtime import AgentRuntime
+
+    store = AgentRuntime().session("repl-test").store
+    assert [record["content"] for record in store.by_role("user")] == ["第一个问题", "第二个问题"]
+    assert [record["content"] for record in store.by_role("assistant")] == [
+        "第一轮回答。",
+        "第二轮回答。",
+    ]
+
+
+def test_default_policy_is_read_only(tmp_path, sandbox) -> None:
+    """不给 --allow 时，写操作必须被拒绝——命令行的默认姿势是安全的。"""
+    script = _script_file(
+        tmp_path,
+        [
+            {
+                "text": "写个文件。",
+                "tokens": 5,
+                "tool_calls": [
+                    {
+                        "call_id": "w1",
+                        "name": "write_file",
+                        "arguments": {"path": "x.txt", "content": "x"},
+                    }
+                ],
+            },
+            {"text": "被拒了。", "tokens": 5},
+        ],
+    )
+
+    code = cli.main(
+        ["-p", "写文件", "--script", str(script), "--root", str(sandbox)],
+        out=io.StringIO(),
+    )
+
+    assert code == cli.EXIT_OK
+    assert not (sandbox / "x.txt").exists()
+    from zoo_code_agent.runtime import AgentRuntime
+
+    tool_records = AgentRuntime().session("cli").store.by_role("tool")
+    assert "被拒绝" in tool_records[0]["content"]
+
+
+def test_allow_preauthorizes_the_named_tool(tmp_path, sandbox) -> None:
+    script = _script_file(
+        tmp_path,
+        [
+            {
+                "text": "写个文件。",
+                "tokens": 5,
+                "tool_calls": [
+                    {
+                        "call_id": "w1",
+                        "name": "write_file",
+                        "arguments": {"path": "x.txt", "content": "ok"},
+                    }
+                ],
+            },
+            {"text": "写好了。", "tokens": 5},
+        ],
+    )
+
+    code = cli.main(
+        ["-p", "写文件", "--script", str(script), "--root", str(sandbox), "--allow", "write_file"],
+        out=io.StringIO(),
+    )
+
+    assert code == cli.EXIT_OK
+    assert (sandbox / "x.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_script_must_be_a_json_array(tmp_path, sandbox) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"text": "not a list"}', encoding="utf-8")
+
+    code = cli.main(
+        ["-p", "x", "--script", str(bad), "--root", str(sandbox)],
+        out=io.StringIO(),
+    )
+
+    assert code == cli.EXIT_ERROR

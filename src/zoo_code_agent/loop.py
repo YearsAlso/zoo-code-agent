@@ -216,10 +216,18 @@ def on_tool_call(request: Any) -> None:
         return
 
     tool = state.registry.get(payload["name"])
-    try:
-        result = tool.handler(payload["arguments"])
-    except ToolError as exc:
-        result = f"工具失败：{exc}"
+    verdict = state.policy.assess(
+        tool.name, payload["arguments"], requires_approval=tool.requires_approval
+    )
+    if verdict.allowed:
+        try:
+            result = tool.handler(payload["arguments"])
+        except ToolError as exc:
+            result = f"工具失败：{exc}"
+    else:
+        # 拒绝不是异常：写成一条观察回灌给模型，让它换一条路；会话不因此崩掉。
+        # 同时它也是可断言的事实——"没被执行"和"执行后返回空"必须能区分开。
+        result = f"工具被拒绝（{verdict.reason}）：{tool.name}"
 
     state.store.append(
         role="tool",

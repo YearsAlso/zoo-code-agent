@@ -12,6 +12,7 @@ from typing import Any
 from zoo_framework.core.container import ThreadSafety, process_scoped
 
 from .model import ModelClient
+from .permissions import PermissionPolicy
 from .session import SessionStore
 from .tools import IdempotencyLedger, ToolRegistry, default_registry
 
@@ -20,18 +21,21 @@ LEDGER_KEY = "ledger"
 
 
 class SessionState:
-    """一次会话的存储、幂等账本与工具集。
+    """一次会话的存储、幂等账本、工具集与权限策略。
 
     账本与工具集**按会话**而非按进程：付费副作用的幂等性属于会话，跨会话共享账本会让
     不同会话的同名查询互相顶掉。账本随会话状态落盘，故重启续跑后既不重复扣费，
     也不丢掉既有条目。
+
+    权限策略同样按会话：同一次运行里，只读探查与"允许改文件"是两种授权，不该互相污染。
     """
 
-    def __init__(self, session_id: str, root: Path) -> None:
+    def __init__(self, session_id: str, root: Path, policy: PermissionPolicy | None = None) -> None:
         self.session_id = session_id
         self.store = SessionStore(session_id)
         self.ledger = IdempotencyLedger(on_change=self._persist_ledger)
         self.ledger.restore(self.store.get(LEDGER_KEY))
+        self.policy = policy or PermissionPolicy()
         self.registry: ToolRegistry = default_registry(root, self.ledger)
 
     def _persist_ledger(self, snapshot: dict[str, Any]) -> None:
@@ -47,6 +51,7 @@ class AgentRuntime:
         model: 模型客户端；``None`` 表示尚未配置。
         budget: token 预算上限。
         deadline: 截止期（``time.monotonic()`` 基准）；``None`` 表示不设。
+        policy: 工具准入策略；默认拒绝一切需要审批的操作（失败关闭）。
     """
 
     def __init__(self) -> None:
@@ -54,6 +59,7 @@ class AgentRuntime:
         self.model: ModelClient | None = None
         self.budget: int = 0
         self.deadline: float | None = None
+        self.policy: PermissionPolicy = PermissionPolicy()
         self.sessions: dict[str, SessionState] = {}
 
     def configure(
@@ -63,6 +69,7 @@ class AgentRuntime:
         root: Path | str | None = None,
         budget: int = 1000,
         deadline: float | None = None,
+        policy: PermissionPolicy | None = None,
     ) -> None:
         """装配运行期。
 
@@ -76,6 +83,8 @@ class AgentRuntime:
             self.root = Path(root)
         self.budget = budget
         self.deadline = deadline
+        if policy is not None:
+            self.policy = policy
 
     def session(self, session_id: str) -> SessionState:
         """取（或建立）一个会话。
@@ -84,8 +93,12 @@ class AgentRuntime:
         """
         state = self.sessions.get(session_id)
         if state is None:
-            state = SessionState(session_id, self.root)
+            state = SessionState(session_id, self.root, self.policy)
             self.sessions[session_id] = state
+        else:
+            # 运行期是策略的真源：会话可能在 configure() 之前就被建出来（预置状态的
+            # 用例就是这么做的），此处同步，避免"配了策略却不生效"这种静默降级。
+            state.policy = self.policy
         return state
 
     def reset(self) -> None:

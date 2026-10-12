@@ -17,7 +17,9 @@ from zoo_code_agent.runtime import AgentRuntime
 BROKEN = "def add(a, b):\n    return a - b\n"
 TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 
-PYTEST = f'"{sys.executable}" -m pytest -q'
+# `-B`：沙箱里禁写字节码。否则「等长改动落在同一秒内」会让 pytest 复用旧 .pyc——
+# 第一次跑失败 → 改成**等长**的正确代码 → 第二次跑仍读到旧字节码。
+PYTEST = f'"{sys.executable}" -B -m pytest -q'
 
 
 def _script() -> ScriptedClient:

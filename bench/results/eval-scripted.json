@@ -1,0 +1,51 @@
+{
+  "tasks": 3,
+  "success": 3,
+  "success_rate": 1.0,
+  "median_turns": 5,
+  "median_tool_calls": 4,
+  "median_tokens": 40,
+  "median_wall_clock_s": 1.902,
+  "failures": [],
+  "runs": [
+    {
+      "task_id": "bugfix-01",
+      "success": true,
+      "failure_reason": null,
+      "stop_reason": "model_stopped",
+      "turns": 5,
+      "tool_calls": 4,
+      "tokens": 40,
+      "wall_clock": 1.902,
+      "check_exit_code": 0,
+      "tampered_test_files": [],
+      "check_output": ".                                                                        [100%]\n1 passed in 0.01s"
+    },
+    {
+      "task_id": "feature-01",
+      "success": true,
+      "failure_reason": null,
+      "stop_reason": "model_stopped",
+      "turns": 5,
+      "tool_calls": 4,
+      "tokens": 40,
+      "wall_clock": 1.134,
+      "check_exit_code": 0,
+      "tampered_test_files": [],
+      "check_output": "..                                                                       [100%]\n2 passed in 0.01s"
+    },
+    {
+      "task_id": "edgecase-01",
+      "success": true,
+      "failure_reason": null,
+      "stop_reason": "model_stopped",
+      "turns": 5,
+      "tool_calls": 4,
+      "tokens": 40,
+      "wall_clock": 2.004,
+      "check_exit_code": 0,
+      "tampered_test_files": [],
+      "check_output": "..                                                                       [100%]\n2 passed in 0.01s"
+    }
+  ]
+}

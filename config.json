@@ -4,10 +4,12 @@
     "level": "warning"
   },
   "stateMachine": {
-    "picklePath": "./.zoo/zooStates.pic"
+    "picklePath": "./.zoo/zooStates.pic",
+    "delay": 0.05
   },
   "event": {
-    "pushModelEnabled": true
+    "pushModelEnabled": true,
+    "delay": 0.05
   },
   "worker": {
     "pool": {

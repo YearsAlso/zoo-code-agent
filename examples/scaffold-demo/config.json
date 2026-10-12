@@ -1,0 +1,1 @@
+{"_exports": [], "log": {"path": "./logs", "level": "warning"}, "worker": {"runPolicy": "simple", "pool": {"size": 5, "enabled": false}}, "demo": {"greeting": "hello from config.json"}}

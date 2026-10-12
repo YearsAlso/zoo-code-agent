@@ -13,7 +13,7 @@
 
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
-pytest                      # 74 用例，全部不需要 API 密钥
+pytest                      # 100 用例，全部不需要 API 密钥
 python -c "from zoo_code_agent.agent import run; run()"   # 脚本化会话，Ctrl-C 退出
 ```
 
@@ -37,6 +37,29 @@ master = build_master(
 print(drive_session(master, "s1"))
 ```
 
+## 命令行
+
+```bash
+zca                                                              # 交互式会话（需要 ANTHROPIC_API_KEY）
+zca -p "让 tests 通过" --allow write_file,edit_file,run_shell     # 无头单次
+zca --json -p "让 tests 通过" --allow run_shell                   # 每行一个 JSON 事件
+zca -p "看看目录" --script examples/smoke.json --allow list_dir    # 零密钥演示（脚本化模型）
+```
+
+**退出码**区分终止原因，脚本才能据此分支：`0` 完成 / `2` 预算耗尽 / `3` 截止期到达 /
+`4` 超时 / `5` 错误。
+
+**默认只读**：不做任何预授权时，写与执行类调用一律被拒绝。要让它改代码，显式给出
+`--allow`，或在可信环境用 `--approve-all`——交互式审批界面尚未实现，这一点如实写在
+[`permissions.py`](src/zoo_code_agent/permissions.py) 的模块说明里。
+
+**流式是步骤级**：每个模型响应、每次工具结果出现即打印，不是 token 级流式——
+`ModelClient.complete` 一次性返回整条响应。
+
+想看**标准 `zfc --create` 项目**长什么样（以及怎么在标准 Worker 里跑一条 agent 会话），
+见 [`examples/scaffold-demo/`](examples/scaffold-demo/)——那个目录是由脚手架命令原样生成、
+再用 `zfc --worker` 加了一个 agent Worker 的结果。
+
 ## 一次会话由什么组成
 
 `agent-loop` / `model-client` / `tool-invocation` / `session-persistence` 四个能力，规格在
@@ -51,6 +74,51 @@ print(drive_session(master, "s1"))
 - **投递**：工具调用经框架事件管道派发，不由 Worker 体内直调。
 - **状态**：会话记录与幂等账本经框架状态机落盘，**进程重启后可续跑**（见
   [`add-session-resume`](openspec/changes/add-session-resume/proposal.md)）。
+- **上下文**：系统提示分层（基础行为 → 项目指令 → 可用工具），工作目录里的 `AGENTS.md` /
+  `CLAUDE.md` 会自动注入；历史超限时把中间那段折叠成**一条摘要观察**（保留了目标、改过的文件、
+  跑过的命令），**存档不动**；预算按「输入估算 + 输出实报」计。
+
+## 任务级基准：它能干什么，用数字说话
+
+```bash
+python -m zoo_code_agent.evals                       # 全部任务，脚本化模型，零密钥
+python -m zoo_code_agent.evals --task bugfix-01 --repeats 3
+python -m zoo_code_agent.evals --real-provider       # 真实模型（需要 API 密钥）
+```
+
+三个任务覆盖三类改动：修 bug（`bugfix-01`）、补实现（`feature-01`）、修空输入边界
+（`edgecase-01`）。判定**独立于 agent**——跑沙箱里的 `pytest`，并比对考题文件的内容哈希：
+**改测试等同于失败**。
+
+| 任务 | 结果 | 轮数 | 工具调用 | tokens | 端到端 |
+|---|---|---|---|---|---|
+| `bugfix-01` | 通过 | 5 | 4 | 40 | 1.90 s |
+| `feature-01` | 通过 | 5 | 4 | 40 | 1.13 s |
+| `edgecase-01` | 通过 | 5 | 4 | 40 | 2.00 s |
+| **中位数** | **3/3** | 5 | 4 | 40 | **1.90 s** |
+
+> 数字来自 2026-10-12 本机一次运行（Windows / Python 3.13，脚本化模型，不含网络延迟）；
+> 原始 JSON 在 [`bench/results/eval-scripted.json`](bench/results/eval-scripted.json)。
+> 真实模型下的成功率**尚未测量**——那需要 API 密钥，另行记录。
+
+### 能做 / 不能做（如实）
+
+**能做**（脚本化计划下已验证）：读测试 → 定位源码 → 改一行 → 再跑测试确认，全程经权限门；
+改 bug、补一个函数实现、修空输入边界；会话跨进程重启续跑，重放的副作用不重复发生。
+
+**不能做**（当前版本，明确写出来）：不能靠改测试"通过"（基准会判失败，这是设计不是缺陷）；
+没有交互式审批界面（写/执行靠预授权或审批回调，默认全拒）；没有沙箱（`run_shell` 的边界是
+工作目录 + 权限门，不是隔离）；真实模型路径未测。
+
+### 一个实测教训：只开推模型不够
+
+事件管道有两个时间参数：`event:pushModelEnabled`（生产者入队即唤醒消费者）与 `event:delay`
+（每轮排空之后的间隔）。**只开推模型时，每个事件处理完仍要等一个 `delay`（默认 5 秒）**——
+同一批任务因此从 1.9 秒退化到 16.7 秒。两个都调对，才是"毫秒级派发"：
+
+```json
+{ "event": { "pushModelEnabled": true, "delay": 0.05 } }
+```
 
 ## 四个实测发现（含后续状态）
 
@@ -131,7 +199,13 @@ print(drive_session(master, "s1"))
   [`add-session-resume`](openspec/changes/add-session-resume/proposal.md) 回填。
 - [`add-coding-tools`](openspec/changes/add-coding-tools/proposal.md)：补齐写 / 编辑 / 执行 /
   检索工具与权限门；端到端验收是「跑测试失败 → 读码 → 改码 → 跑测试通过」。
-- 测试：**74 条**用例全绿，`ruff` 通过，三个变更 `openspec validate --strict` 均通过。
+- [`add-task-eval`](openspec/changes/add-task-eval/proposal.md)：任务级基准——三个任务、
+  独立判定、成本指标与结果落盘。
+- [`add-cli-and-headless`](openspec/changes/add-cli-and-headless/proposal.md)：`zca` 交互式 /
+  单次 / JSON 事件流三种入口，退出码区分终止原因，默认只读。
+- [`add-context-engineering`](openspec/changes/add-context-engineering/proposal.md)：项目指令注入、
+  提示分层、输入侧记账与历史压缩；顺带修掉真实提供方路径上"多个工具结果不满足角色交替"的缺陷。
+- 测试：**100 条**用例全绿，`ruff` 通过，六个变更 `openspec validate --strict` 均通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 
 ## 与框架仓库的关系

@@ -17,6 +17,7 @@ from zoo_framework.reactor.event_reactor import EventReactor
 from zoo_framework.reactor.event_retry_strategy import EventRetryStrategy
 from zoo_framework.workers.base_worker import BaseWorker
 
+from .context import compact_view, estimate_tokens
 from .model import Message, ToolCall
 from .runtime import AgentRuntime, SessionState
 from .session import SessionStore
@@ -68,12 +69,29 @@ def _requeue_unfinished(store: SessionStore) -> None:
         store.set("pending", pending)
 
 
+def continue_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
+    """在**既有**会话上追加一条用户消息，并清掉终止状态，使循环可以继续推进。
+
+    交互式入口（``zca``）用它实现多轮：一轮结束后会话记录与账本都还在，下一轮只是再追加
+    一条用户消息。MUST NOT 新建会话——那会把上下文丢掉，「REPL」也就不是 REPL 了。
+    """
+    state = runtime.session(session_id)
+    store = state.store
+    turn = len(store.by_role("assistant"))
+    store.append(role="user", content=prompt, turn=turn)
+    store.set("stop_reason", None)
+
+
 def termination_reason(runtime: AgentRuntime, session_id: str) -> str | None:
-    """当前是否已命中终止条件；未命中返回 ``None``。"""
+    """当前是否已命中终止条件；未命中返回 ``None``。
+
+    预算口径是**输入估算 + 输出实报**：只算输出会让"读了一个大文件"这种花钱的回合看起来不要钱。
+    """
     store = runtime.session(session_id).store
     if runtime.deadline is not None and time.monotonic() >= runtime.deadline:
         return STOP_DEADLINE
-    if store.get("tokens_spent", 0) >= runtime.budget:
+    spent = store.get("tokens_spent", 0) + store.get("input_tokens_estimated", 0)
+    if spent >= runtime.budget:
         return STOP_BUDGET
     return None
 
@@ -121,7 +139,10 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
         raise RuntimeError("运行期尚未配置模型；请先调用 AgentRuntime.configure()")
 
     turn = len(store.by_role("assistant")) + 1
-    response = runtime.model.complete(_messages(state), state.registry.declarations())
+    messages = _messages(state)
+    # 输入侧记账：真实用量以提供方返回的 usage 为准，这里的估算值只参与预算与压缩判断。
+    store.set("input_tokens_estimated", estimate_tokens("".join(item.content for item in messages)))
+    response = runtime.model.complete(messages, state.registry.declarations())
 
     store.append(
         role="assistant",
@@ -253,9 +274,13 @@ def _mark_done(state: SessionState, call_id: str) -> None:
 
 
 def _messages(state: SessionState) -> tuple[Message, ...]:
-    """由会话记录构造模型可见的消息序列。"""
+    """由会话记录构造模型可见的消息序列（必要时先压缩）。
+
+    压缩只作用于**视图**：落盘的记录保持完整，审计与重启续跑都不受影响。
+    """
     messages: list[Message] = []
-    for record in state.store.records():
+    view, _summary = compact_view(state.store.records())
+    for record in view:
         role = record.get("role")
         if role not in {"user", "assistant", "tool"}:
             continue

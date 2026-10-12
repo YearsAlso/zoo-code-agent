@@ -1,0 +1,79 @@
+"""命令行入口：``python -m zoo_code_agent.evals``。
+
+默认跑全部任务、用脚本化模型（零密钥），结果既打印成表也写成 JSON。
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from .runner import format_table, run_all, summarize, write_results
+from .tasks import TASKS
+
+DEFAULT_OUT = Path("bench/results/eval-scripted.json")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """构造参数解析器。"""
+    parser = argparse.ArgumentParser(
+        prog="python -m zoo_code_agent.evals",
+        description="任务级验收基准：在临时沙箱里跑编码任务并记录成功率与成本。",
+    )
+    parser.add_argument(
+        "--task",
+        action="append",
+        dest="tasks",
+        metavar="ID",
+        help=f"只跑指定任务，可重复；默认全部（{', '.join(t.task_id for t in TASKS)}）",
+    )
+    parser.add_argument("--repeats", type=int, default=1, help="每个任务重复次数，默认 1")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT,
+        help=f"结果 JSON 路径，默认 {DEFAULT_OUT}",
+    )
+    parser.add_argument(
+        "--real-provider",
+        action="store_true",
+        help="使用 AnthropicClient（需要 ANTHROPIC_API_KEY）；默认用脚本化模型",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """跑评测并返回进程退出码：全部通过为 0，否则为 1。"""
+    args = build_parser().parse_args(argv)
+
+    model = None
+    if args.real_provider:
+        from ..providers import AnthropicClient
+
+        model = AnthropicClient(system="你是一个只改源码、不改测试的编码助手。")
+
+    runs = run_all(
+        task_ids=tuple(args.tasks) if args.tasks else None,
+        model=model,
+        repeats=args.repeats,
+    )
+    summary = summarize(runs)
+
+    print(format_table(runs))
+    print()
+    print(
+        f"success {summary['success']}/{summary['tasks']}  "
+        f"median: turns={summary['median_turns']} "
+        f"tools={summary['median_tool_calls']} "
+        f"tokens={summary['median_tokens']} "
+        f"wall={summary['median_wall_clock_s']}s"
+    )
+    written = write_results(summary, args.out)
+    print(f"results → {written}")
+
+    return 0 if summary["success"] == summary["tasks"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -31,7 +31,9 @@ def test_default_policy_denies_everything_that_needs_approval() -> None:
 
 def test_preauthorized_tool_is_allowed_without_asking_the_approver() -> None:
     calls: list[str] = []
-    policy = PermissionPolicy(allowed={"write_file"}, approver=lambda _r: calls.append("asked") or True)
+    policy = PermissionPolicy(
+        allowed={"write_file"}, approver=lambda _r: calls.append("asked") or True
+    )
 
     verdict = policy.assess("write_file", {"path": "a"}, requires_approval=True)
 

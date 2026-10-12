@@ -345,7 +345,10 @@ def find_tool(root: Path, max_results: int = 200) -> Tool:
         if not matches:
             return "（无匹配）"
         if len(matches) > max_results:
-            return "\n".join(matches[:max_results]) + f"\n…（共 {len(matches)} 条，仅显示前 {max_results} 条）"
+            return (
+                "\n".join(matches[:max_results])
+                + f"\n…（共 {len(matches)} 条，仅显示前 {max_results} 条）"
+            )
         return "\n".join(matches)
 
     return Tool(

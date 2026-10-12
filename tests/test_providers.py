@@ -81,6 +81,40 @@ def test_plain_user_message_is_passed_through() -> None:
     ]
 
 
+def test_consecutive_tool_results_are_merged_into_one_user_message() -> None:
+    """Anthropic 要求 user/assistant 交替：多个工具结果直接发出去会得到 roles must alternate。"""
+    messages = [
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=(
+                ToolCall(call_id="c1", name="read_file", arguments={"path": "a"}),
+                ToolCall(call_id="c2", name="list_dir", arguments={"path": "."}),
+            ),
+        ),
+        Message(role="tool", content="甲", tool_call_id="c1"),
+        Message(role="tool", content="乙", tool_call_id="c2"),
+    ]
+
+    converted = to_anthropic_messages(messages)
+
+    assert [item["role"] for item in converted] == ["assistant", "user"]
+    blocks = converted[1]["content"]
+    assert [block["tool_use_id"] for block in blocks] == ["c1", "c2"]
+
+
+def test_consecutive_text_messages_are_merged_into_text_blocks() -> None:
+    converted = to_anthropic_messages(
+        [Message(role="user", content="前半"), Message(role="user", content="后半")]
+    )
+
+    assert len(converted) == 1
+    assert converted[0]["content"] == [
+        {"type": "text", "text": "前半"},
+        {"type": "text", "text": "后半"},
+    ]
+
+
 def test_response_parsing_splits_text_and_tool_use_and_sums_tokens() -> None:
     raw = SimpleNamespace(
         content=[

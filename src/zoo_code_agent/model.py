@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -96,6 +96,41 @@ class ScriptedClient:
     def __init__(self, script: Sequence[ModelResponse]) -> None:
         self._script: list[ModelResponse] = list(script)
         self._index = 0
+
+    @classmethod
+    def from_dicts(cls, payload: Sequence[Mapping[str, Any]]) -> ScriptedClient:
+        """由 JSON 友好的字典列表构造。
+
+        存在的理由：命令行要能在**没有任何 API 密钥**的情况下跑一条确定性会话（演示、录像、
+        CI、复现 bug 报告）。格式：
+
+        ``[{"text": "...", "tokens": 5, "tool_calls": [{"call_id": "c1", "name": "read_file",
+        "arguments": {"path": "README.md"}}]}, ...]``
+
+        Raises:
+            ValueError: 条目缺少必需的 ``call_id`` / ``name``。
+        """
+        responses: list[ModelResponse] = []
+        for index, item in enumerate(payload):
+            calls: list[ToolCall] = []
+            for raw in item.get("tool_calls", []):
+                if "call_id" not in raw or "name" not in raw:
+                    raise ValueError(f"脚本第 {index + 1} 条的工具调用缺少 call_id 或 name")
+                calls.append(
+                    ToolCall(
+                        call_id=str(raw["call_id"]),
+                        name=str(raw["name"]),
+                        arguments=dict(raw.get("arguments", {})),
+                    )
+                )
+            responses.append(
+                ModelResponse(
+                    text=str(item.get("text", "")),
+                    tool_calls=tuple(calls),
+                    tokens=int(item.get("tokens", 0)),
+                )
+            )
+        return cls(responses)
 
     def complete(
         self, messages: Sequence[Message], tools: Sequence[ToolDeclaration]

@@ -141,9 +141,7 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
     turn = len(store.by_role("assistant")) + 1
     messages = _messages(state)
     # 输入侧记账：真实用量以提供方返回的 usage 为准，这里的估算值只参与预算与压缩判断。
-    store.set(
-        "input_tokens_estimated", estimate_tokens("".join(item.content for item in messages))
-    )
+    store.set("input_tokens_estimated", estimate_tokens("".join(item.content for item in messages)))
     response = runtime.model.complete(messages, state.registry.declarations())
 
     store.append(

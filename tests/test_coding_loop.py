@@ -23,7 +23,11 @@ PYTEST = f'"{sys.executable}" -m pytest -q'
 def _script() -> ScriptedClient:
     return ScriptedClient(
         [
-            ModelResponse(text="先跑一遍测试。", tool_calls=(ToolCall("c1", "run_shell", {"command": PYTEST}),), tokens=5),
+            ModelResponse(
+                text="先跑一遍测试。",
+                tool_calls=(ToolCall("c1", "run_shell", {"command": PYTEST}),),
+                tokens=5,
+            ),
             ModelResponse(
                 text="测试失败，先看源码。",
                 tool_calls=(ToolCall("c2", "read_file", {"path": "calc.py"}),),
@@ -32,11 +36,19 @@ def _script() -> ScriptedClient:
             ModelResponse(
                 text="运算符写错了，改掉。",
                 tool_calls=(
-                    ToolCall("c3", "edit_file", {"path": "calc.py", "old": "return a - b", "new": "return a + b"}),
+                    ToolCall(
+                        "c3",
+                        "edit_file",
+                        {"path": "calc.py", "old": "return a - b", "new": "return a + b"},
+                    ),
                 ),
                 tokens=5,
             ),
-            ModelResponse(text="再跑一遍。", tool_calls=(ToolCall("c4", "run_shell", {"command": PYTEST}),), tokens=5),
+            ModelResponse(
+                text="再跑一遍。",
+                tool_calls=(ToolCall("c4", "run_shell", {"command": PYTEST}),),
+                tokens=5,
+            ),
             ModelResponse(text="测试通过。", tokens=5),
         ]
     )

@@ -177,7 +177,9 @@ def drive_session(
     )
 
 
-def _emit_new_records(store: Any, seen: int, on_event: Callable[[dict[str, Any]], None] | None) -> int:
+def _emit_new_records(
+    store: Any, seen: int, on_event: Callable[[dict[str, Any]], None] | None
+) -> int:
     """把新出现的会话记录转成事件回调出去；返回已处理到的记录条数。
 
     事件类型取自记录本身（``user`` / ``assistant`` / ``tool``），因此不需要在框架内部埋点，

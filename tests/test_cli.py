@@ -137,7 +137,11 @@ def test_default_policy_is_read_only(tmp_path, sandbox) -> None:
                 "text": "写个文件。",
                 "tokens": 5,
                 "tool_calls": [
-                    {"call_id": "w1", "name": "write_file", "arguments": {"path": "x.txt", "content": "x"}}
+                    {
+                        "call_id": "w1",
+                        "name": "write_file",
+                        "arguments": {"path": "x.txt", "content": "x"},
+                    }
                 ],
             },
             {"text": "被拒了。", "tokens": 5},
@@ -165,7 +169,11 @@ def test_allow_preauthorizes_the_named_tool(tmp_path, sandbox) -> None:
                 "text": "写个文件。",
                 "tokens": 5,
                 "tool_calls": [
-                    {"call_id": "w1", "name": "write_file", "arguments": {"path": "x.txt", "content": "ok"}}
+                    {
+                        "call_id": "w1",
+                        "name": "write_file",
+                        "arguments": {"path": "x.txt", "content": "ok"},
+                    }
                 ],
             },
             {"text": "写好了。", "tokens": 5},

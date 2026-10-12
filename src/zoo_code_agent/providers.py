@@ -54,6 +54,10 @@ def to_anthropic_messages(messages: Sequence[Any]) -> list[dict[str, Any]]:
 
     助手消息携带的工具调用 MUST 以 ``tool_use`` 块回传，紧随其后的 ``tool_result``
     才有所指；只回传文本会让工具结果变成无主引用。
+
+    转换后会合并相邻的同角色消息——Anthropic 要求 ``messages`` 在 user / assistant 之间交替，
+    而"多个工具结果"按契约是各自独立的一条 ``tool`` 消息，直接发出去会得到
+    ``roles must alternate`` 报错。合并只发生在**转换之后**，因此 ``ModelClient`` 契约不受影响。
     """
     converted: list[dict[str, Any]] = []
     for message in messages:
@@ -86,7 +90,27 @@ def to_anthropic_messages(messages: Sequence[Any]) -> list[dict[str, Any]]:
             )
         else:
             converted.append({"role": "user", "content": message.content})
-    return converted
+    return _merge_consecutive(converted)
+
+
+def _as_blocks(content: Any) -> list[dict[str, Any]]:
+    """把消息内容统一成块列表，便于合并。"""
+    if isinstance(content, list):
+        return content
+    return [{"type": "text", "text": str(content)}]
+
+
+def _merge_consecutive(converted: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并相邻的同角色消息，满足提供方的交替要求。"""
+    merged: list[dict[str, Any]] = []
+    for message in converted:
+        if merged and merged[-1]["role"] == message["role"]:
+            merged[-1]["content"] = _as_blocks(merged[-1]["content"]) + _as_blocks(
+                message["content"]
+            )
+        else:
+            merged.append({"role": message["role"], "content": message["content"]})
+    return merged
 
 
 def from_anthropic_response(response: Any) -> ModelResponse:

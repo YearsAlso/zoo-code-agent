@@ -91,9 +91,20 @@ def build_model(args: argparse.Namespace) -> ModelClient:
             raise ValueError("脚本文件 MUST 是 JSON 数组")
         return ScriptedClient.from_dicts(payload)
 
+    from .context import compose_system_prompt, load_project_instructions
     from .providers import AnthropicClient
+    from .tools import IdempotencyLedger, default_registry
 
-    kwargs: dict[str, Any] = {"system": DEFAULT_SYSTEM}
+    # 项目指令（AGENTS.md / CLAUDE.md）注入系统提示；工具名同样来自工具集的单一真源。
+    instructions = load_project_instructions(args.root)
+    registry = default_registry(Path(args.root), IdempotencyLedger())
+    system = compose_system_prompt(
+        base=DEFAULT_SYSTEM,
+        instructions=instructions,
+        tool_names=sorted(tool.name for tool in registry.all()),
+    )
+
+    kwargs: dict[str, Any] = {"system": system}
     if args.model:
         kwargs["model"] = args.model
     return AnthropicClient(**kwargs)

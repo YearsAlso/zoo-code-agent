@@ -7,7 +7,24 @@
 - ``python src/main.py``：起调度器，注册本项目的 Worker（脚手架默认行为）
 - ``python src/main.py -p "..."``：跑一次 agent 会话
 - ``python src/main.py --eval``：跑任务级基准
+- ``zca``（安装后）：与上面三种调用等价，见下
 
 它只依赖 PyPI 上已发布的 ``zoo-framework``，不修改框架；框架已明确排除的
 「Agent 层策略」（compaction / token 预算 / 摘要）归本项目。
 """
+
+import sys
+from pathlib import Path
+
+_SRC_DIR = str(Path(__file__).resolve().parent)
+
+# 安装态（`uv tool install` / `uvx --from git+...`）与就地运行之间的桥。
+#
+# 引擎各模块是**平铺的顶层模块**（`from agent import ...`）：就地运行时靠 `sys.path[0] = src/`
+# 解析；一旦被当作包 `src` 安装，`src/cli.py` 里的 `from agent import ...` 会直接
+# `ModuleNotFoundError: No module named 'agent'`（实测）。两种方式都要成立，所以这里把本目录
+# 放上路径——导入 `src.main`（控制台入口 `zca` 的目标）必然会先执行本文件。
+#
+# 就地运行时本目录已经在路径上，这里是空操作。
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)

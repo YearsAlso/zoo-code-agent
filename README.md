@@ -66,6 +66,9 @@ print(drive_session(master, "s1"))
 ## 命令行
 
 ```bash
+uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --help   # 免安装试用
+uvx --from "zoo-code-agent[eval]@git+https://github.com/YearsAlso/zoo-code-agent" zca --eval  # 基准（需 pytest）
+
 python src/main.py                                                # 脚手架默认行为：起调度器、跑 Worker
 python src/main.py -i                                             # 交互式会话（需要 ANTHROPIC_API_KEY）
 python src/main.py -p "让 tests 通过" --allow write_file,edit_file,run_shell   # 无头单次
@@ -239,7 +242,10 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 | `add-context-engineering` | 指令注入、提示分层、输入侧记账、历史压缩 | `context-engineering` |
 | `adopt-scaffold-layout` | 整体改造为标准脚手架布局 | `project-layout` |
 
-- 测试：**107 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，基线规格 `--strict` 校验通过。
+- 进行中：`add-console-entry`——把 `zca` 控制台入口加回来（`uvx --from git+… zca …` 免 clone 试用），
+  并修掉两个只在安装态出现的问题（缺 pytest 时提示不清、项目目录外跑基准慢 10 倍）。
+  它会改写上表的 `project-layout` 一处条款。
+- 测试：**108 条**用例全绿，`ruff` 通过；基线规格 `--strict` 校验通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 
 ## 与框架仓库的关系

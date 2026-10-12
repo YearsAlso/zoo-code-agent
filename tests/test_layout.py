@@ -63,11 +63,23 @@ def test_no_source_file_uses_the_old_package_prefix() -> None:
     assert offenders == [], f"仍在使用旧包名的文件：{offenders}"
 
 
-def test_project_is_an_application_not_a_distribution() -> None:
-    """脚手架产出的是应用：不声明控制台入口，运行方式是 `python src/main.py`。"""
+def test_project_exposes_one_console_entry_point() -> None:
+    """两条运行路径必须指向**同一个实现**：安装后的 `zca` 与就地 `python src/main.py`。
+
+    入口指向 `src.main:main`（而不是 `src.cli`）是有原因的：平铺导入（`from agent import ...`）
+    在被当作包安装后解析不了——`src/__init__.py` 把本目录放上路径正是为了补这一刀，实测过。
+    """
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert "scripts" not in data.get("project", {}), "MUST NOT 声明 [project.scripts]"
+    scripts = data["project"]["scripts"]
+    assert scripts == {"zca": "src.main:main"}, "入口 MUST 是 src.main:main（唯一实现）"
+
+
+def test_package_init_bridges_flat_imports_for_the_installed_case() -> None:
+    """`src/__init__.py` MUST 把自身目录放上路径，否则安装态下 `from agent import ...` 必失败。"""
+    init = (SRC / "__init__.py").read_text(encoding="utf-8")
+
+    assert "_SRC_DIR" in init and "sys.path.insert" in init
 
 
 def test_pytest_imports_the_way_the_scaffold_does() -> None:

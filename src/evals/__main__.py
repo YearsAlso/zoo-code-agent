@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .runner import format_table, run_all, summarize, write_results
+from .runner import format_table, missing_check_tooling, run_all, summarize, write_results
 from .tasks import TASKS
 
 DEFAULT_OUT = Path("bench/results/eval-scripted.json")
@@ -49,6 +49,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """跑评测并返回进程退出码：全部通过为 0，否则为 1。"""
     args = build_parser().parse_args(argv)
+
+    # 先把环境缺件拦下来：否则每个任务都会以"验收命令退出码 1"失败，
+    # 使用者看不出那是 `No module named pytest`。
+    missing = missing_check_tooling()
+    if missing is not None:
+        print(f"[error] {missing}")
+        return 1
 
     model = None
     if args.real_provider:

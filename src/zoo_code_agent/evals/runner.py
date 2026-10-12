@@ -100,7 +100,9 @@ def run_task(
     """
     reset_all()
 
-    parent = Path(work_root) if work_root is not None else Path(tempfile.mkdtemp(prefix="zca-eval-"))
+    parent = (
+        Path(work_root) if work_root is not None else Path(tempfile.mkdtemp(prefix="zca-eval-"))
+    )
     root = parent / task.task_id
     root.mkdir(parents=True, exist_ok=True)
     _materialize(task, root)

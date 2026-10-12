@@ -13,7 +13,7 @@
 
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
-pytest                      # 49 用例，全部不需要 API 密钥
+pytest                      # 74 用例，全部不需要 API 密钥
 python -c "from zoo_code_agent.agent import run; run()"   # 脚本化会话，Ctrl-C 退出
 ```
 
@@ -44,8 +44,10 @@ print(drive_session(master, "s1"))
 
 - **循环**：`BaseWorker` 子类，`is_loop` 为真，一次 `_execute` 推进一步；三类终止条件
   （预算 / 截止期 / 模型不再请求工具）命中即止。
-- **工具**：声明 + 执行体；只读（读文件 / 列目录，路径规范化后校验落在根目录内）+ 一个
-  「付费」桩工具。**没有任何写、删或执行能力。**
+- **工具**：声明 + 执行体。只读（读文件 / 列目录 / 内容检索 `grep` / 文件名检索 `find`）+
+  需审批的副作用（写文件 / 精确编辑 / 执行命令 / 付费桩）。路径**先规范化再校验落在根目录内**。
+- **权限**：需要审批的工具在**没有审批者**时一律拒绝（失败关闭）；拒绝不是异常，会作为一条
+  观察回灌给模型。**默认配置下 agent 只能只读**——要让它改代码，必须显式给出预授权或审批者。
 - **投递**：工具调用经框架事件管道派发，不由 Worker 体内直调。
 - **状态**：会话记录与幂等账本经框架状态机落盘，**进程重启后可续跑**（见
   [`add-session-resume`](openspec/changes/add-session-resume/proposal.md)）。
@@ -127,7 +129,9 @@ print(drive_session(master, "s1"))
 
 - `add-minimal-agent-loop`：最小环已实现；因框架 #72 被移出的重启续跑（E2/E3/E4）已由
   [`add-session-resume`](openspec/changes/add-session-resume/proposal.md) 回填。
-- 测试：**49 条**用例全绿，`ruff` 通过，两个变更 `openspec validate --strict` 均通过。
+- [`add-coding-tools`](openspec/changes/add-coding-tools/proposal.md)：补齐写 / 编辑 / 执行 /
+  检索工具与权限门；端到端验收是「跑测试失败 → 读码 → 改码 → 跑测试通过」。
+- 测试：**74 条**用例全绿，`ruff` 通过，三个变更 `openspec validate --strict` 均通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 
 ## 与框架仓库的关系

@@ -9,6 +9,7 @@ from __future__ import annotations
 from zoo_code_agent.agent import build_master, drive_session
 from zoo_code_agent.loop import STOP_MODEL
 from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
+from zoo_code_agent.permissions import PermissionPolicy
 from zoo_code_agent.runtime import AgentRuntime
 
 
@@ -53,6 +54,8 @@ def test_paid_tool_is_charged_exactly_once_end_to_end(sandbox) -> None:
         prompt="查一下",
         root=sandbox,
         budget=100,
+        # 付费副作用需要审批：这里给一个"全部放行"的审批者，把变量收敛到幂等本身。
+        policy=PermissionPolicy(approver=lambda _request: True),
     )
 
     drive_session(master, "paid")

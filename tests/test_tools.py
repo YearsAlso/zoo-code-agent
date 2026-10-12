@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from zoo_code_agent.permissions import PermissionPolicy
 from zoo_code_agent.tools import (
     IdempotencyLedger,
     MissingDescription,
@@ -19,16 +20,11 @@ from zoo_code_agent.tools import (
     read_file_tool,
 )
 
-WRITE_OR_EXEC_CAPABILITIES = {
-    "write_file",
-    "delete_file",
-    "remove",
-    "run_command",
-    "shell",
-    "exec",
-    "eval",
-}
-"""写 / 删 / 执行 / 求值类能力的名称——工具集 MUST NOT 含其中任何一个。"""
+CODE_EVAL_CAPABILITIES = {"eval", "exec"}
+"""代码求值能力——工具集 MUST NOT 含其中任何一个：它是绕过权限边界的后门。"""
+
+APPROVAL_REQUIRED_TOOLS = {"write_file", "edit_file", "run_shell", "paid_lookup"}
+"""写 / 执行 / 付费副作用——可以存在，但 MUST NOT 绕过权限门。"""
 
 
 def _noop(_arguments: dict) -> str:
@@ -118,11 +114,34 @@ def test_list_dir_rejects_escape(outside) -> None:
         list_dir_tool(root).handler({"path": ".."})
 
 
-def test_default_registry_has_no_write_or_exec_capability(sandbox) -> None:
-    registry = default_registry(sandbox, IdempotencyLedger())
+def test_default_registry_gates_write_and_exec_and_never_exposes_code_eval(sandbox) -> None:
+    """能力边界的现状：有写/执行，但每一次都要过权限门；代码求值一律不提供。
 
-    names = {tool.name for tool in registry.all()}
+    这条用例替代了 0.8.0 时代的「工具集不含写/执行」断言——那是对的起点，但不是终点：
+    coding agent 不能只会读。边界从「没有危险能力」改成「危险能力必须逐次授权」。
+    """
+    registry = default_registry(sandbox, IdempotencyLedger())
+    tools = {tool.name: tool for tool in registry.all()}
+    names = set(tools)
 
     assert names, "先断言非空——空集会让下面的否定式断言恒真"
-    assert names.isdisjoint(WRITE_OR_EXEC_CAPABILITIES)
-    assert names == {"read_file", "list_dir", "paid_lookup"}
+    assert names.isdisjoint(CODE_EVAL_CAPABILITIES), "代码求值能力 MUST NOT 存在"
+    assert names >= APPROVAL_REQUIRED_TOOLS, "写/执行/付费能力必须真的存在，否则不是 coding agent"
+    for name in sorted(APPROVAL_REQUIRED_TOOLS):
+        assert tools[name].requires_approval is True, f"{name} MUST 声明为需要审批"
+
+    # 默认策略下这些能力一个都不可达——"注册了"不等于"能调"。
+    policy = PermissionPolicy()
+    for name in sorted(APPROVAL_REQUIRED_TOOLS):
+        assert not policy.assess(name, {}, requires_approval=True).allowed
+
+    assert names == {
+        "read_file",
+        "list_dir",
+        "grep",
+        "find",
+        "write_file",
+        "edit_file",
+        "run_shell",
+        "paid_lookup",
+    }

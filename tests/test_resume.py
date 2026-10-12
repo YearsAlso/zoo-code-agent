@@ -9,6 +9,7 @@ from __future__ import annotations
 from zoo_code_agent.agent import build_master, drive_session
 from zoo_code_agent.loop import STOP_MODEL
 from zoo_code_agent.model import ModelResponse, ScriptedClient, ToolCall
+from zoo_code_agent.permissions import PermissionPolicy
 from zoo_code_agent.runtime import AgentRuntime, reset_process_state_carriers
 from zoo_code_agent.tools import idempotency_key
 
@@ -87,6 +88,7 @@ def test_resume_redispatches_unfinished_call_without_a_second_side_effect(sandbo
         prompt="（续跑时该参数被忽略）",
         root=sandbox,
         budget=100,
+        policy=PermissionPolicy(approver=lambda _request: True),
     )
     drive_session(master, "resume-pending")
 

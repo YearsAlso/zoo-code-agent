@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,9 @@ class Tool:
     Attributes:
         handler: 执行体，接收参数字典并返回文本结果。
         side_effect: 是否产生不可撤销的副作用（付费调用等）。
+        requires_approval: 是否 MUST 经权限门审批后才执行。写与执行类工具一律为真；
+            只读工具为假。默认值取假只是为了让只读工具少写一个参数——危险工具 MUST
+            显式声明为真，这条由 ``test_default_registry_gates_write_and_exec`` 守住。
     """
 
     name: str
@@ -49,6 +54,7 @@ class Tool:
     parameters: dict[str, Any]
     handler: Callable[[dict[str, Any]], str]
     side_effect: bool = False
+    requires_approval: bool = False
 
 
 class ToolRegistry:
@@ -251,6 +257,250 @@ def list_dir_tool(root: Path) -> Tool:
     )
 
 
+MAX_TOOL_OUTPUT = 8000
+"""单个工具返回文本的上限（字符）。超出会截断并显式标注——静默丢内容会让模型以为看到的就是全部。"""
+
+SKIP_DIR_NAMES = frozenset(
+    {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules", ".zoo"}
+)
+"""检索类工具跳过的目录名：版本库、虚拟环境、缓存与运行期产物。"""
+
+
+def _truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
+    """截断过长输出，并留下可被模型读到的标注。"""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n…（输出被截断：共 {len(text)} 字符，仅显示前 {limit} 字符）"
+
+
+def _iter_text_files(base: Path) -> Iterator[Path]:
+    """深度优先遍历文件，跳过 ``SKIP_DIR_NAMES``。"""
+    for entry in sorted(base.iterdir()):
+        if entry.is_dir():
+            if entry.name in SKIP_DIR_NAMES:
+                continue
+            yield from _iter_text_files(entry)
+        elif entry.is_file():
+            yield entry
+
+
+def grep_tool(root: Path, max_results: int = 100) -> Tool:
+    """构造只读的「内容检索」工具：按正则逐行匹配文本文件。"""
+
+    def handler(arguments: dict[str, Any]) -> str:
+        try:
+            pattern = re.compile(str(arguments["pattern"]))
+        except re.error as exc:
+            raise ToolError(f"正则表达式无效：{exc}") from exc
+
+        base = _resolve_in_root(root, str(arguments.get("path", ".")))
+        if not base.is_dir():
+            raise ToolError(f"不是目录：{arguments.get('path', '.')!r}")
+
+        root_resolved = root.resolve()
+        hits: list[str] = []
+        for file in _iter_text_files(base):
+            try:
+                content = file.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue  # 二进制或不可读文件不是错误，跳过即可
+            for lineno, line in enumerate(content.splitlines(), 1):
+                if pattern.search(line):
+                    hits.append(f"{file.relative_to(root_resolved)}:{lineno}: {line.strip()[:200]}")
+                    if len(hits) >= max_results:
+                        hits.append(f"…（已达上限 {max_results} 条，请缩小范围）")
+                        return "\n".join(hits)
+        return "\n".join(hits) if hits else "（无匹配）"
+
+    return Tool(
+        name="grep",
+        description="在根目录内按正则检索文件内容，返回「文件:行号: 内容」。默认最多 100 条。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "正则表达式"},
+                "path": {"type": "string", "description": "相对根目录的起始路径，默认 '.'"},
+            },
+            "required": ["pattern"],
+        },
+        handler=handler,
+    )
+
+
+def find_tool(root: Path, max_results: int = 200) -> Tool:
+    """构造只读的「文件名检索」工具：按 glob 匹配。"""
+
+    def handler(arguments: dict[str, Any]) -> str:
+        pattern = str(arguments["pattern"])
+        base = _resolve_in_root(root, str(arguments.get("path", ".")))
+        if not base.is_dir():
+            raise ToolError(f"不是目录：{arguments.get('path', '.')!r}")
+
+        root_resolved = root.resolve()
+        matches = [
+            str(path.relative_to(root_resolved))
+            for path in sorted(base.rglob(pattern))
+            if not any(part in SKIP_DIR_NAMES for part in path.relative_to(root_resolved).parts)
+        ]
+        if not matches:
+            return "（无匹配）"
+        if len(matches) > max_results:
+            return "\n".join(matches[:max_results]) + f"\n…（共 {len(matches)} 条，仅显示前 {max_results} 条）"
+        return "\n".join(matches)
+
+    return Tool(
+        name="find",
+        description="在根目录内按 glob 匹配文件名或路径（例如 '**/test_*.py'），返回相对路径。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "glob 模式"},
+                "path": {"type": "string", "description": "相对根目录的起始路径，默认 '.'"},
+            },
+            "required": ["pattern"],
+        },
+        handler=handler,
+    )
+
+
+def write_file_tool(root: Path) -> Tool:
+    """构造需审批的「写文件」工具：创建或覆盖，父目录不存在时自动创建。"""
+
+    def handler(arguments: dict[str, Any]) -> str:
+        target = _resolve_in_root(root, str(arguments["path"]))
+        content = str(arguments["content"])
+        if target.is_dir():
+            raise ToolError(f"目标是目录，不能写入：{arguments['path']!r}")
+        existed = target.exists()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        action = "覆盖" if existed else "创建"
+        return f"已{action} {arguments['path']}（{len(content)} 字符）"
+
+    return Tool(
+        name="write_file",
+        description="在根目录内创建或覆盖一个文本文件（父目录不存在时自动创建）。需要审批。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "相对根目录的路径"},
+                "content": {"type": "string", "description": "完整文件内容"},
+            },
+            "required": ["path", "content"],
+        },
+        handler=handler,
+        side_effect=True,
+        requires_approval=True,
+    )
+
+
+def edit_file_tool(root: Path) -> Tool:
+    """构造需审批的「精确编辑」工具：默认要求匹配唯一，未匹配时报错而不是静默无操作。"""
+
+    def handler(arguments: dict[str, Any]) -> str:
+        target = _resolve_in_root(root, str(arguments["path"]))
+        if not target.is_file():
+            raise ToolError(f"不是文件：{arguments['path']!r}")
+
+        old = str(arguments["old"])
+        new = str(arguments["new"])
+        if not old:
+            raise ToolError("待替换文本不能为空")
+
+        original = target.read_text(encoding="utf-8")
+        occurrences = original.count(old)
+        if occurrences == 0:
+            raise ToolError(f"未找到待替换文本：{old[:80]!r}")
+
+        replace_all = bool(arguments.get("replace_all", False))
+        if occurrences > 1 and not replace_all:
+            raise ToolError(
+                f"待替换文本出现 {occurrences} 次；请扩大上下文使其唯一，或显式 replace_all=True"
+            )
+
+        target.write_text(original.replace(old, new), encoding="utf-8")
+        return f"已编辑 {arguments['path']}（替换 {occurrences if replace_all else 1} 处）"
+
+    return Tool(
+        name="edit_file",
+        description="对根目录内的文本文件做精确字符串替换；默认要求匹配唯一，未匹配时明确报错。需要审批。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "相对根目录的路径"},
+                "old": {"type": "string", "description": "待替换的原文"},
+                "new": {"type": "string", "description": "替换后的文本"},
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "匹配多次时是否全部替换，默认 false（此时多次匹配会报错）",
+                },
+            },
+            "required": ["path", "old", "new"],
+        },
+        handler=handler,
+        side_effect=True,
+        requires_approval=True,
+    )
+
+
+def run_shell_tool(root: Path, default_timeout: float = 60.0) -> Tool:
+    """构造需审批的「执行命令」工具。
+
+    用 ``shell=True`` 是刻意的：管道、``&&``、通配符是 coding agent 真正需要的能力，
+    禁用它们只会让模型写出一串拼错的变体。**安全边界不在这里的字符串过滤，而在权限门与
+    工作目录**——每次调用都要审批，``cwd`` 固定为声明的根目录。危险命令黑名单不是安全
+    边界，本工具不假装它是。
+    """
+
+    def handler(arguments: dict[str, Any]) -> str:
+        command = str(arguments["command"])
+        if not command.strip():
+            raise ToolError("命令不能为空")
+        timeout = float(arguments.get("timeout", default_timeout))
+
+        try:
+            # shell=True 的取舍见本工具 docstring；安全边界是权限门，不是字符串过滤。
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return f"命令超时（{timeout}s）：{command}"
+        except OSError as exc:
+            raise ToolError(f"命令无法执行：{exc}") from exc
+
+        parts = [f"exit_code={completed.returncode}"]
+        if completed.stdout.strip():
+            parts.append("stdout:\n" + _truncate(completed.stdout))
+        if completed.stderr.strip():
+            parts.append("stderr:\n" + _truncate(completed.stderr))
+        return "\n".join(parts)
+
+    return Tool(
+        name="run_shell",
+        description=(
+            "在根目录下用系统 shell 执行一条命令，返回 exit_code 与 stdout/stderr。需要审批。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要执行的 shell 命令"},
+                "timeout": {"type": "number", "description": "超时秒数，默认 60"},
+            },
+            "required": ["command"],
+        },
+        handler=handler,
+        side_effect=True,
+        requires_approval=True,
+    )
+
+
 def paid_lookup_tool(ledger: IdempotencyLedger) -> Tool:
     """构造「付费查询」桩工具。
 
@@ -278,16 +528,29 @@ def paid_lookup_tool(ledger: IdempotencyLedger) -> Tool:
         },
         handler=handler_with_ledger,
         side_effect=True,
+        requires_approval=True,
     )
 
 
 def default_registry(root: Path, ledger: IdempotencyLedger) -> ToolRegistry:
-    """构造演示用的默认工具集：两个只读工具 + 一个付费桩工具。
+    """构造默认工具集。
 
-    工具集 MUST NOT 包含写、删、执行或代码求值能力。
+    组成：只读（读文件 / 列目录 / 内容检索 / 文件名检索）+ 需审批的副作用（写文件 /
+    编辑文件 / 执行命令 / 付费桩）。
+
+    工具集 MUST NOT 包含**代码求值**能力（``eval`` / ``exec``）——那是把整条权限边界
+    绕过去的后门，任何情况下都不提供。写与执行能力存在，但 MUST NOT 绕过权限门。
+
+    注册本身不构成放行：是否执行由 ``PermissionPolicy`` 在调用时判定，默认策略拒绝
+    一切需要审批的操作。
     """
     registry = ToolRegistry()
     registry.register(read_file_tool(root))
     registry.register(list_dir_tool(root))
+    registry.register(grep_tool(root))
+    registry.register(find_tool(root))
+    registry.register(write_file_tool(root))
+    registry.register(edit_file_tool(root))
+    registry.register(run_shell_tool(root))
     registry.register(paid_lookup_tool(ledger))
     return registry

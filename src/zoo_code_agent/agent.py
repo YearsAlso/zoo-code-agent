@@ -15,6 +15,7 @@ from zoo_framework.core import Master
 
 from .loop import make_agent_worker, register_tool_reactor, start_session
 from .model import ModelClient
+from .permissions import PermissionPolicy
 from .runtime import AgentRuntime
 
 DEFAULT_BUDGET = 1000
@@ -82,6 +83,7 @@ def build_master(
     root: Path | str = ".",
     budget: int = DEFAULT_BUDGET,
     timeout_seconds: float | None = None,
+    policy: PermissionPolicy | None = None,
 ) -> Master:
     """装配一个可运行的 ``Master``。
 
@@ -92,6 +94,8 @@ def build_master(
         root: 只读工具的根目录。
         budget: token 预算上限。
         timeout_seconds: 截止期（相对秒数）；``None`` 表示不设。
+        policy: 工具准入策略。``None`` 表示使用运行期默认值——**拒绝一切需要审批的操作**，
+            即只读模式。要让 agent 真正改代码或跑命令，必须显式给出预授权名单或审批者。
 
     Returns:
         已注册 Agent 循环 Worker 的 ``Master``（尚未 run）。
@@ -101,7 +105,7 @@ def build_master(
 
     runtime = AgentRuntime()
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
-    runtime.configure(model=model, root=root, budget=budget, deadline=deadline)
+    runtime.configure(model=model, root=root, budget=budget, deadline=deadline, policy=policy)
     register_tool_reactor()
     start_session(runtime, session_id, prompt)
 

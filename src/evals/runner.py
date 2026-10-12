@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import statistics
 import subprocess
@@ -27,6 +28,24 @@ from .tasks import TASKS, EvalTask, get_task
 
 CHECK_TIMEOUT = 120.0
 """验收命令的超时（秒）。"""
+
+CHECK_TOOL = "pytest"
+"""验收用的命令所属的包。缺它时基准无法判定，必须给出明确提示。"""
+
+
+def missing_check_tooling() -> str | None:
+    """验收依赖是否齐备；缺则返回一句可照做的提示，否则 ``None``。
+
+    存在的理由：装成工具（`uv tool install`，不含 dev extras）之后跑 `zca --eval`，
+    子进程会因为 `No module named pytest` 退出码 1，而表格里只显示"验收命令退出码 1"——
+    使用者完全看不出是环境缺东西。这里提前拦下，把话说明白。
+    """
+    if importlib.util.find_spec(CHECK_TOOL) is None:
+        return (
+            f"环境缺少 {CHECK_TOOL}，基准无法验收；装上再跑："
+            f"pip install 'zoo-code-agent[eval]'（或单独 pip install {CHECK_TOOL}）"
+        )
+    return None
 
 
 @dataclass(frozen=True)
@@ -53,6 +72,22 @@ class TaskRun:
     check_exit_code: int | None
     tampered_test_files: tuple[str, ...]
     check_output: str
+
+
+def _tune_event_pipeline() -> None:
+    """把事件管道调成本项目基准使用的节拍。
+
+    基准会在**任意工作目录**里被调用（例如 ``uvx --from git+… zca --eval``），而框架读的是
+    cwd 下的 ``./config.json``——那里通常没有本项目的配置，于是回落到默认：推模型关、
+    ``event:delay`` 为 5 秒，一批任务因此从 ~2 秒涨到 ~20 秒。
+
+    基准要的是"任何目录下都得到同样的数字"，所以这里显式设成与本仓库 ``config.json`` 一致的值。
+    做法与 ``bench/measure_session_latency.py`` 相同。
+    """
+    from zoo_framework.params import EventParams
+
+    EventParams.PUSH_MODEL_ENABLED = True
+    EventParams.EVENT_DELAY_TIME = 0.05
 
 
 def _digest(path: Path) -> str:
@@ -101,6 +136,24 @@ def run_task(
         work_root: 沙箱父目录；``None`` 表示用系统临时目录。
     """
     reset_all()
+
+    missing = missing_check_tooling()
+    if missing is not None:
+        return TaskRun(
+            task_id=task.task_id,
+            success=False,
+            failure_reason=missing,
+            stop_reason=None,
+            turns=0,
+            tool_calls=0,
+            tokens=0,
+            wall_clock=0.0,
+            check_exit_code=None,
+            tampered_test_files=(),
+            check_output=missing,
+        )
+
+    _tune_event_pipeline()
 
     parent = (
         Path(work_root) if work_root is not None else Path(tempfile.mkdtemp(prefix="zca-eval-"))

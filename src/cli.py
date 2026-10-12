@@ -56,8 +56,9 @@ DEFAULT_SESSION = "cli"
 def build_parser() -> argparse.ArgumentParser:
     """构造参数解析器。"""
     parser = argparse.ArgumentParser(
-        prog="python src/main.py",
+        prog="zca",
         description="基于 zoo-framework 的最小 coding agent。",
+        epilog="就地运行等价：python src/main.py（参数与行为完全一致）。",
     )
     parser.add_argument("-p", "--prompt", help="单次执行的提示；省略则进入交互式会话")
     parser.add_argument(

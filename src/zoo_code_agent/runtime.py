@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from zoo_framework.core.container import ThreadSafety, framework_container, process_scoped
+from zoo_framework.core.container import ThreadSafety, process_scoped
 
 from .model import ModelClient
 from .session import SessionStore
@@ -104,22 +104,35 @@ def runtime() -> AgentRuntime:
 
 
 def reset_all() -> None:
-    """复位框架的进程级共享状态——仅测试期使用。
+    """测试期完整复位：进程级载体 + 落盘存档。
 
-    0.8.0 里**没有** ``process_state.reset_process_state()``（那是 dev 主干上
-    ``declare-debt-carriers`` 的产物，尚未发布），故这里按**载体类别**逐项复位：
-    容器、两个挂在**类**上的注册表，以及**不在容器内**的 ``WorkerRegistry`` 单例。
-    后两类都不随容器复位——类属性属于类对象，而 ``WorkerRegistry`` 是模块级单例。
-
-    三处漏一个都会造成真实的假阳性：``WorkerRegistry`` 尤其阴——它按**名字**缓存已
-    实例化的 Worker，于是第二个用例注册同名 Worker 时拿回的仍是第一个用例的实例
-    （闭包里绑着第一个用例的会话），表现为「新会话永远不推进」。
+    0.12.0 起框架自带 ``core.process_state.reset_process_state()``（变更
+    ``declare-debt-carriers`` / #50），容器、配置面与适配器由它统一复位；本函数只补
+    框架**刻意不复位**的载体，以及 0.8.0 时代不需要、0.12.0 之后必须做的一步。
     """
+    reset_process_state_carriers()
+    clear_persisted_state()
+
+
+def reset_process_state_carriers() -> None:
+    """复位框架的进程级共享载体（不动落盘存档）。
+
+    ``reset_process_state()`` 覆盖容器与配置面；另有三处被框架声明为「不随用例复位」
+    （``reset=None``），必须在这里补：两个挂在**类**上的注册表与**不在容器内**的
+    ``WorkerRegistry`` 单例。``WorkerRegistry`` 尤其阴——它按**名字**缓存已实例化的
+    Worker，于是第二个用例注册同名 Worker 时拿回的仍是第一个用例的实例（闭包里绑着
+    第一个用例的会话），表现为「新会话永远不推进」。
+
+    与 ``reset_all()`` 分开，是因为「模拟进程重启」的用例需要**保留落盘存档**，
+    只丢弃内存载体。
+    """
+    from zoo_framework.core.process_state import reset_process_state
     from zoo_framework.core.worker_registry import get_worker_registry
     from zoo_framework.event.event_channel_register import EventChannelRegister
     from zoo_framework.reactor.event_reactor_manager import EventReactorManager
 
-    framework_container().reset()
+    reset_process_state()
+
     EventChannelRegister._channel_map.clear()
     EventReactorManager.reactor_map.clear()
 
@@ -128,3 +141,21 @@ def reset_all() -> None:
     registry._worker_classes.clear()
     registry._worker_factories.clear()
     registry._worker_metadata.clear()
+
+
+def clear_persisted_state() -> None:
+    """删除落盘的状态存档（含临时文件）。
+
+    0.8.0 的读盘是空操作，所以旧测试从不关闭这条通道；0.12.0 修好之后（#72），
+    上一次运行留下的 ``.zoo/zooStates.pic`` 会在 ``StateMachineWorker`` 首次执行时被
+    **整表读回**，跨用例污染会话——实测表现是端到端用例里出现重复的 tool 记录。
+    状态存档属于运行期产物，测试期必须清掉。
+    """
+    from zoo_framework.params import StateMachineParams
+
+    path = Path(StateMachineParams.PICKLE_PATH)
+    for candidate in (path, path.with_name(f"{path.name}.tmp")):
+        try:
+            candidate.unlink()
+        except FileNotFoundError:
+            continue

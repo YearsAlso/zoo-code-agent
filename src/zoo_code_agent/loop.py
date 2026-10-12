@@ -19,6 +19,7 @@ from zoo_framework.workers.base_worker import BaseWorker
 
 from .model import Message, ToolCall
 from .runtime import AgentRuntime, SessionState
+from .session import SessionStore
 from .tools import ToolError
 
 TOOL_TOPIC = "tool_call"
@@ -33,12 +34,38 @@ STOP_REASONS = (STOP_BUDGET, STOP_DEADLINE, STOP_MODEL)
 
 
 def start_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
-    """写入首条用户消息并复位会话标量。"""
+    """写入首条用户消息并复位会话标量；已有记录的会话按「续跑」处理。
+
+    重启续跑（E4）：读回既有记录后 MUST NOT 再追加一次首条用户消息，也 MUST NOT
+    复位 ``tokens_spent`` / ``stop_reason``——否则「续跑」会退化成「重来一遍、还带着
+    旧历史」。
+    """
     state = runtime.session(session_id)
+    if state.store.records():
+        _requeue_unfinished(state.store)
+        return
+
     state.store.append(role="user", content=prompt, turn=0)
     state.store.set("pending", [])
     state.store.set("tokens_spent", 0)
     state.store.set("stop_reason", None)
+
+
+def _requeue_unfinished(store: SessionStore) -> None:
+    """把上一进程里「已派发但未完成」的工具调用重新置为待派发。
+
+    在飞状态属于进程：进程没了，``dispatched=True`` 就不再成立。若不重置，续跑会在
+    ``await`` 上空转——不会再有任何一方派发它。重新派发是安全的：副作用由
+    ``IdempotencyLedger`` 去重，重放只会复用首次结果，MUST NOT 再次进入执行体。
+    """
+    pending = [dict(item) for item in store.get("pending", [])]
+    changed = False
+    for item in pending:
+        if not item.get("done") and item.get("dispatched"):
+            item["dispatched"] = False
+            changed = True
+    if changed:
+        store.set("pending", pending)
 
 
 def termination_reason(runtime: AgentRuntime, session_id: str) -> str | None:

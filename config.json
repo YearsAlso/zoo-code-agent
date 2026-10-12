@@ -6,6 +6,9 @@
   "stateMachine": {
     "picklePath": "./.zoo/zooStates.pic"
   },
+  "event": {
+    "pushModelEnabled": true
+  },
   "worker": {
     "pool": {
       "size": 4,

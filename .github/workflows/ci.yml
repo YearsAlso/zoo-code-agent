@@ -13,7 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.13"]
+        # 3.11 是 requires-python 的下界（0.12.0 起框架降到 3.11）：下界 MUST 在 CI 里真跑，
+        # 否则"声明支持 3.11"只是文档承诺。
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
 

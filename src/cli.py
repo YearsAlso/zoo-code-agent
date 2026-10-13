@@ -105,15 +105,18 @@ def build_model(args: argparse.Namespace) -> ModelClient:
 
     from .context import compose_system_prompt, load_project_instructions
     from .providers import AnthropicClient
+    from .skills import load_skills
     from .tools import IdempotencyLedger, default_registry
 
     # 项目指令（AGENTS.md / CLAUDE.md）注入系统提示；工具名同样来自工具集的单一真源。
     instructions = load_project_instructions(args.root)
     registry = default_registry(Path(args.root), IdempotencyLedger())
+    skills = load_skills(args.root)
     system = compose_system_prompt(
         base=DEFAULT_SYSTEM,
         instructions=instructions,
         tool_names=sorted(tool.name for tool in registry.all()),
+        skills=[(skill.name, skill.description) for skill in skills],
     )
 
     kwargs: dict[str, Any] = {"system": system}

@@ -91,16 +91,18 @@ def compose_system_prompt(
     base: str,
     instructions: Iterable[ProjectInstruction] = (),
     tool_names: Sequence[str] = (),
+    skills: Iterable[tuple[str, str]] = (),
 ) -> str:
     """按分层拼出系统提示。
 
     层级顺序即优先级说明的顺序：基础行为在前，项目指令在后（因而更具体、更优先），最后列出
-    可用工具名。**当前请求不在这里**——它是消息列表里的最后一条用户消息，属于会话而不是系统提示。
+    可用工具名与可用技能。**当前请求不在这里**——它是消息列表里的最后一条用户消息，属于会话而不是系统提示。
 
     Args:
         base: 基础行为说明。
         instructions: 已加载的项目指令。
         tool_names: 可用工具名，仅列名字；完整签名由工具声明负责，不在这里复制一份。
+        skills: 可用技能的 ``(名字, 一行描述)``——**只列目录，正文由 ``read_skill`` 按需读入**。
     """
     sections = ["## 基础行为", base.strip()]
 
@@ -115,6 +117,14 @@ def compose_system_prompt(
     if tool_names:
         sections.append("## 可用工具")
         sections.append(", ".join(tool_names))
+
+    catalog = list(skills)
+    if catalog:
+        sections.append("## 可用技能")
+        sections.append("以下技能按需加载：需要时调用 read_skill(name) 把正文取进来。")
+        for name, description in catalog:
+            line = f"- {name}" + (f"：{description}" if description else "")
+            sections.append(line)
 
     return "\n\n".join(section for section in sections if section.strip())
 

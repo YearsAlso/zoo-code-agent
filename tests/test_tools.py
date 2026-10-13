@@ -140,6 +140,7 @@ def test_default_registry_gates_write_and_exec_and_never_exposes_code_eval(sandb
         "list_dir",
         "grep",
         "find",
+        "read_skill",
         "write_file",
         "edit_file",
         "run_shell",

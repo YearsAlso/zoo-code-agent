@@ -139,6 +139,8 @@ python src/main.py --eval                                          # 任务级�
   跑过的命令），**存档不动**；预算按「输入估算 + 输出实报」计。
 - **钩子**：三个生命周期扩展点——`pre_tool`（拒绝，或**改写参数**）、`post_tool`（观察结果）、
   `on_stop`（会话收尾）。默认不挂。
+- **技能**：放在 `skills/<名字>/SKILL.md` 的指令包，提示里只列名字与一行描述，
+  正文由 `read_skill(name)` 按需加载。
 
 ## 扩展：生命周期钩子
 
@@ -164,6 +166,33 @@ master = build_master(model=client, session_id="s", prompt="...", root=".", hook
 
 钩子抛异常按**失败关闭**：`pre_tool` 抛错拒绝该调用，理由里带着它；`post_tool` / `on_stop`
 抛错被吞下——那时工具结果与终止原因**已经定下**，观察者出错不该把已定的事实翻掉。
+
+## 写你自己的技能
+
+技能是**按需加载**的指令包：提示里只列名字与一行描述，正文靠一次工具调用取回。放在
+`skills/<名字>/SKILL.md`：
+
+```
+skills/
+└── migration-check/
+    └── SKILL.md
+```
+
+```markdown
+---
+name: migration-check
+description: 改数据库 schema 时，先核对迁移脚本再动 ORM 模型
+---
+1. 先找迁移目录，列出已有脚本。
+2. 新迁移必须幂等（`IF NOT EXISTS` / `DO $$ ... $$`）。
+3. 配一份回滚脚本；整段 DDL 用事务包裹。
+```
+
+系统提示里只会出现 `migration-check：<描述>`；调用 `read_skill("migration-check")` 才把正文
+作为**一条工具观察**取进来。该工具是只读的，权限门默认放行——需要额外管控时可以挂一个
+`pre_tool` 钩子（见上面钩子那一节）。未知名字会报错并列出可用技能，不会静默返回空正文。
+
+回落规则：不写 frontmatter 时，名字取目录名，描述取正文第一条非空行。
 
 ## 任务级基准：它能干什么，用数字说话
 

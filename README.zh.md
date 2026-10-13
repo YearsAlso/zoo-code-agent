@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg"/>
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo.svg"/>
-  <img src="docs/assets/logo.svg" alt="zoo-code-agent" width="300"/>
+  <img src="docs/assets/logo.png" alt="zoo-code-agent" width="300"/>
 </picture>
 
 **zoo-code-agent** —— 基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的

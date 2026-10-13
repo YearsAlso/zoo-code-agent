@@ -5,13 +5,25 @@ build-backend = "hatchling.build"
 [project]
 name = "zoo-code-agent"
 version = "0.0.1"
-description = "跑在你自己进程里的 Python coding agent：读代码、改代码、跑测试，写入过权限门"
+description = "基于 zoo-framework 的最小 coding agent（标准脚手架布局）"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 dependencies = [
     # 只消费已发布的框架版本，MUST NOT 跟随 dev 主干（见 openspec/changes/add-minimal-agent-loop/design.md D1）
     # 0.12.0 起，本仓库记录的两个框架阻塞已修复并发布：状态读盘恢复（#72）、
     # 事件节拍可配 + 推模型（#73）。据此解除 0.8.0 的钉死（issue #1）。
     "zoo-framework>=0.12,<0.13",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 [project.optional-dependencies]

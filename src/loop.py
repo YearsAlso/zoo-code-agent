@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -17,6 +18,7 @@ from zoo_framework.reactor.event_reactor import EventReactor
 from zoo_framework.reactor.event_retry_strategy import EventRetryStrategy
 from zoo_framework.workers.base_worker import BaseWorker
 
+import agent_events
 from context import compact_view, estimate_tokens
 from hooks import decide_pre_tool, notify_on_stop, notify_post_tool
 from model import Message, ToolCall
@@ -32,7 +34,22 @@ TOOL_RETRY_TIMES = 3
 STOP_BUDGET = "budget_exhausted"
 STOP_DEADLINE = "deadline_reached"
 STOP_MODEL = "model_stopped"
-STOP_REASONS = (STOP_BUDGET, STOP_DEADLINE, STOP_MODEL)
+STOP_CANCELLED = "cancelled"
+STOP_REASONS = (STOP_BUDGET, STOP_DEADLINE, STOP_MODEL, STOP_CANCELLED)
+
+PHASE_THINKING = "thinking"
+PHASE_TOOLS = "tools_pending"
+PHASE_STOPPED = "stopped"
+PHASES = (PHASE_THINKING, PHASE_TOOLS, PHASE_STOPPED)
+"""会话阶段：向模型要响应 / 等工具结果 / 已终止。落进状态，可查询、可断言。"""
+
+_append_lock = threading.Lock()
+"""落盘与发布的互斥。
+
+多个工具反应器可能**并发**完成；若各自独立地"先发布再落盘"，事件顺序就取决于线程调度。
+旧实现靠事后 diff 记录天然有序，这里用同一把锁把那个性质保住：**先 append 再 publish**，
+于是事件顺序与记录顺序一致。
+"""
 
 
 def start_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
@@ -51,6 +68,8 @@ def start_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
     state.store.set("pending", [])
     state.store.set("tokens_spent", 0)
     state.store.set("stop_reason", None)
+    state.store.set("cancel_requested", False)
+    state.store.set("phase", PHASE_THINKING)
 
 
 def _requeue_unfinished(store: SessionStore) -> None:
@@ -81,14 +100,37 @@ def continue_session(runtime: AgentRuntime, session_id: str, prompt: str) -> Non
     turn = len(store.by_role("assistant"))
     store.append(role="user", content=prompt, turn=turn)
     store.set("stop_reason", None)
+    store.set("cancel_requested", False)  # 取消是"这一轮"的事：新一轮重新开始
+    store.set("phase", PHASE_THINKING)
+
+
+def _set_phase(state: SessionState, phase: str) -> None:
+    """记录会话阶段。**状态是给外面看的**：不必读记录列表就知道它在干什么。"""
+    if state.store.get("phase") != phase:
+        state.store.set("phase", phase)
+
+
+def _append(state: SessionState, event: dict[str, Any] | None, **record: Any) -> None:
+    """先落盘、再发布：同一把锁保证**事件顺序与记录顺序一致**（见 ``_append_lock``）。
+
+    ``event`` 为 ``None`` 表示这条记录不对外发布（用户消息属于输入，不是 agent 事件）。
+    """
+    with _append_lock:
+        state.store.append(**record)
+        if event is not None:
+            agent_events.publish(agent_events.EVENT_TOPIC, event)
 
 
 def termination_reason(runtime: AgentRuntime, session_id: str) -> str | None:
     """当前是否已命中终止条件；未命中返回 ``None``。
 
     预算口径是**输入估算 + 输出实报**：只算输出会让"读了一个大文件"这种花钱的回合看起来不要钱。
+
+    取消排在第一位：人对"停下"的期待比预算与截止期都更即时。
     """
     store = runtime.session(session_id).store
+    if store.get("cancel_requested"):
+        return STOP_CANCELLED
     if runtime.deadline is not None and time.monotonic() >= runtime.deadline:
         return STOP_DEADLINE
     spent = store.get("tokens_spent", 0) + store.get("input_tokens_estimated", 0)
@@ -115,14 +157,17 @@ def run_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
 
     pending: list[dict[str, Any]] = list(store.get("pending", []))
     if pending:
+        # 在飞优先。同轮的多个调用按 ``agent-loop`` 规格必须**串行**且按模型给出的顺序，
+        # 而事件通道会把反应器交给线程池**并发**执行——那是调度侧的自由，串行是**本循环的
+        # 约定**，只能由这里守：一次只派一个，前一个不完成就不派下一个。
+        inflight = [call for call in pending if call.get("dispatched") and not call.get("done")]
+        if inflight:
+            return {"action": "await", "count": len(inflight)}
+
         undispatched = [call for call in pending if not call.get("dispatched")]
         if undispatched:
-            _dispatch_tool_calls(runtime, session_id, pending, undispatched)
-            return {"action": "dispatch", "count": len(undispatched)}
-
-        unresolved = [call for call in pending if not call.get("done")]
-        if unresolved:
-            return {"action": "await", "count": len(unresolved)}
+            _dispatch_tool_calls(runtime, session_id, pending, undispatched[:1])
+            return {"action": "dispatch", "count": 1}
 
         # 本轮的工具调用已全部完成：清空待办，进入下一次模型轮。
         # 漏掉这一步会让循环永远停在 await——单测直接调 ``on_tool_call`` 时看不到，
@@ -141,18 +186,31 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
 
     turn = len(store.by_role("assistant")) + 1
     messages = _messages(state)
+    _set_phase(state, PHASE_THINKING)
     # 输入侧记账：真实用量以提供方返回的 usage 为准，这里的估算值只参与预算与压缩判断。
     store.set("input_tokens_estimated", estimate_tokens("".join(item.content for item in messages)))
     response = runtime.model.complete(messages, state.registry.declarations())
 
-    store.append(
+    tool_calls = [
+        {"call_id": call.call_id, "name": call.name, "arguments": dict(call.arguments)}
+        for call in response.tool_calls
+    ]
+    # 阶段先于事件落定：订阅者在收到这条 model_response 时，读到的阶段就已经是"等工具"。
+    if tool_calls:
+        _set_phase(state, PHASE_TOOLS)
+    _append(
+        state,
+        {
+            "type": "model_response",
+            "text": response.text,
+            "tool_calls": [
+                {"call_id": call["call_id"], "name": call["name"]} for call in tool_calls
+            ],
+        },
         role="assistant",
         content=response.text,
         turn=turn,
-        tool_calls=[
-            {"call_id": call.call_id, "name": call.name, "arguments": dict(call.arguments)}
-            for call in response.tool_calls
-        ],
+        tool_calls=tool_calls,
     )
     store.set("tokens_spent", store.get("tokens_spent", 0) + response.tokens)
 
@@ -185,15 +243,20 @@ def _stop(runtime: AgentRuntime, session_id: str, reason: str) -> None:
     state = runtime.session(session_id)
     already_stopped = bool(state.store.get("stop_reason"))
     state.store.set("stop_reason", reason)
+    _set_phase(state, PHASE_STOPPED)
     if already_stopped:
         return
-    notify_on_stop(state.hooks, reason, _stop_summary(state))
+    summary = _stop_summary(state)
+    # 终止同样是一条事件：订阅者不必轮询 store 就知道跑完了（那是本变更要消掉的东西）。
+    agent_events.publish(agent_events.STOP_TOPIC, {"type": "stop", "reason": reason, **summary})
+    notify_on_stop(state.hooks, reason, summary)
 
 
 def _stop_summary(state: SessionState) -> dict[str, Any]:
     """会话终止摘要——与 ``drive_session`` 返回的字段同构，供 ``on_stop`` 观察。"""
     return {
         "stop_reason": state.store.get("stop_reason"),
+        "phase": state.store.get("phase"),
         "records": len(state.store.records()),
         "tokens_spent": state.store.get("tokens_spent", 0),
     }
@@ -208,6 +271,9 @@ def _dispatch_tool_calls(
     """把尚未派发的工具调用推入事件管道，并就地标记为已派发。
 
     标记与推入在同一步完成：否则下一轮会把同一调用再推一次。
+
+    调用方**每次只传一个**（见 ``run_turn``）——同轮的多个调用要串行，靠的就是"上一个
+    不完成就没人派下一个"。
     """
     channel = EventChannelManager().get_channel(TOOL_CHANNEL)
     for call in undispatched:
@@ -282,7 +348,9 @@ def on_tool_call(request: Any) -> None:
             # post_tool 只在执行体真的被进入后通知；被拒绝的调用不触发。
             notify_post_tool(state.hooks, tool.name, arguments, result)
 
-    state.store.append(
+    _append(
+        state,
+        {"type": "tool_result", "name": payload["name"], "content": result},
         role="tool",
         content=result,
         tool_call_id=payload["call_id"],

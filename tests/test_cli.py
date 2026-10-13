@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import io
 import json
+import signal
 from pathlib import Path
 
 import cli
+from runtime import AgentRuntime
 
 
 def _script_file(tmp_path: Path, payload) -> Path:
@@ -323,3 +325,17 @@ def test_preauthorized_tool_is_not_asked_again(tmp_path, sandbox) -> None:
     assert code == cli.EXIT_OK
     assert "[需要审批]" not in out.getvalue()
     assert (sandbox / "x.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_sigint_is_turned_into_a_cancel_request() -> None:
+    """Ctrl-C 不再抛栈：装一次处理器，把中断变成"请求停止"这个**状态**。"""
+    with cli._cancel_on_interrupt("sigint"):
+        handler = signal.getsignal(signal.SIGINT)
+        handler(signal.SIGINT, None)  # 模拟用户按下 Ctrl-C
+
+    assert AgentRuntime().session("sigint").store.get("cancel_requested") is True
+    assert signal.getsignal(signal.SIGINT) is not handler, "退出后 MUST 还原原处理器"
+
+
+def test_cancelled_maps_to_its_own_exit_code() -> None:
+    assert cli.STOP_TO_EXIT["cancelled"] == cli.EXIT_CANCELLED

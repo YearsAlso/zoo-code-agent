@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from agent import build_master, drive_session
+from dispatch import dispatch_tasks, load_tasks
 from loop import STOP_CANCELLED, continue_session
 from model import ModelClient, ScriptedClient
 from permissions import PermissionPolicy, PermissionRequest
@@ -93,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--model", default=None, help="真实提供方的模型 id")
     parser.add_argument("--session", default=DEFAULT_SESSION, help="会话标识")
+    parser.add_argument(
+        "--tasks",
+        type=Path,
+        help="批量任务文件（一行一个提示，# 开头为注释）；交给 Master 逐条派发",
+    )
+    parser.add_argument("--concurrency", type=int, default=2, help="批量任务的并发上限")
     return parser
 
 
@@ -284,6 +291,65 @@ def run_once(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
     return _exit_code(summary)
 
 
+def run_batch(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
+    """批量：一行一个提示，交给 ``Master`` 逐条派发（每条一个一次性 Worker）。
+
+    MUST NOT 起那条"长驻循环 Worker"——装配阶段只准备运行期（``prompt=None``），
+    会话由每条任务的 Worker 自己起。
+    """
+    reset_all()
+    tasks = load_tasks(args.tasks)
+    if not tasks:
+        _render({"type": "error", "message": "任务文件里没有任务"}, json_mode=args.json, out=out)
+        return EXIT_ERROR
+
+    master = build_master(
+        model=build_model(args),
+        session_id=args.session,
+        prompt=None,
+        root=args.root,
+        budget=args.budget,
+        timeout_seconds=None,
+        policy=build_policy(args, stdin=stdin, out=out),
+    )
+    try:
+        results = dispatch_tasks(
+            master,
+            tasks,
+            # 每条任务一个客户端：脚本化模型的游标是"谁先到谁用"，共用会互相顶掉。
+            model_for=lambda _index: build_model(args),
+            concurrency=args.concurrency,
+            timeout=args.timeout,
+        )
+    except TimeoutError:
+        _render({"type": "error", "message": "批量任务超时"}, json_mode=args.json, out=out)
+        return EXIT_TIMEOUT
+    except Exception as exc:  # 顶层入口：异常变成退出码，而不是抛栈给使用者
+        _render(
+            {"type": "error", "message": f"{type(exc).__name__}: {exc}"},
+            json_mode=args.json,
+            out=out,
+        )
+        return EXIT_ERROR
+    finally:
+        master.shutdown()
+
+    ok = True
+    for index, item in enumerate(results):
+        if args.json:
+            out.write(json.dumps({"task": index, **item}, ensure_ascii=False) + "\n")
+        elif item.get("error"):
+            out.write(f"[task {index}] 失败：{item['error']}\n")
+        else:
+            out.write(
+                f"[task {index}] {item['session_id']} stop={item['stop_reason']}"
+                f" tokens={item['tokens_spent']}\n"
+            )
+        ok = ok and not item.get("error") and item.get("stop_reason") == "model_stopped"
+    out.flush()
+    return EXIT_OK if ok else EXIT_ERROR
+
+
 def repl(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
     """交互式会话：同一个会话不断追加用户消息，直到 EOF 或 ``/exit``。"""
     reset_all()
@@ -365,6 +431,8 @@ def main(
     stream_in = stdin if stdin is not None else sys.stdin
 
     try:
+        if args.tasks:
+            return run_batch(args, out=stream_out, stdin=stream_in)
         if args.prompt:
             return run_once(args, out=stream_out, stdin=stream_in)
         if args.interactive:

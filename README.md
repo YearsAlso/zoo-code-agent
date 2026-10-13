@@ -160,6 +160,8 @@ Four capabilities — `agent-loop` / `model-client` / `tool-invocation` / `sessi
 - **Events, phase, cancel**: the loop publishes `model_response` / `tool_result` on a topic and one
   stop event on another, so consumers subscribe instead of polling. The session records an explicit
   `phase`, and Ctrl-C becomes a cooperative cancel (exit code `6`).
+- **Batch dispatch**: `--tasks <file>` hands each prompt to the Master as a runtime-registered
+  one-shot worker; results come back on the framework's result topic, capped by `--concurrency`.
 
 ## Extending it: lifecycle hooks
 
@@ -236,6 +238,26 @@ door with `AgentRuntime().request_cancel(session_id)`.
 
 Same-round tool calls now run **one at a time**, in the order the model gave them: the framework
 would happily execute them concurrently, so serialising them is the loop's own contract.
+
+## Batch: let the Master dispatch tasks
+
+One process used to mean one session: the agent registered a single long-lived loop worker and drove
+the scheduler itself. A batch of prompts now goes through the framework's own dispatch path:
+
+```bash
+python src/main.py --tasks tasks.txt --concurrency 2 --allow read_file,edit_file,run_shell
+```
+
+Each line of `tasks.txt` becomes a **one-shot worker** (`is_loop=False`) registered into the Master
+at runtime. `Master.register_worker` adds it to the scheduling list, the scheduler dispatches it, and
+because it is one-shot the scheduler drops it again when it finishes — nothing to reap by hand.
+Results come back on the framework's unified result topic (`waiter`), not by polling session state.
+
+The dispatcher owns exactly three things: feeding the queue, topping up while a slot is free, and
+collecting results in input order. The concurrency cap lives there too, because the thread-per-task
+model this repo uses has no bound of its own. A task that raises becomes that task's own error
+result — the framework logs a worker failure and does *not* emit a result event, so without that step
+the whole batch would sit until its timeout.
 
 ## Task-level benchmark: what it can do, in numbers
 

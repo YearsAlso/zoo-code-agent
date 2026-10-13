@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 186" width="300" height="186" role="img" aria-label="zoo-code-agent">
+  <title>zoo-code-agent</title>
+  <!-- 深色变体：墨色由 #223344 换成 #E7EDF1，强调色 #33aa99 不变。
+       构造说明见 logo.svg。 -->
+  <g transform="translate(98,10)">
+    <circle cx="52" cy="52" r="40" fill="none" stroke="#E7EDF1" stroke-width="7"/>
+    <g stroke-linecap="round">
+      <rect x="30" y="33.5" width="36" height="8.5" rx="4.25" fill="#E7EDF1"/>
+      <rect x="30" y="48"   width="46" height="8.5" rx="4.25" fill="#33aa99"/>
+      <rect x="30" y="62.5" width="26" height="8.5" rx="4.25" fill="#E7EDF1"/>
+    </g>
+  </g>
+  <text x="150" y="158" text-anchor="middle" font-size="28" font-weight="600" letter-spacing="-0.8"
+        fill="#E7EDF1"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">zoo code agent</text>
+</svg>

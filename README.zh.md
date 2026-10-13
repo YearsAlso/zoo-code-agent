@@ -1,17 +1,40 @@
-# zoo-code-agent
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg"/>
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo.svg"/>
+  <img src="docs/assets/logo.png" alt="zoo-code-agent" width="300"/>
+</picture>
+
+**zoo-code-agent** —— 跑在你自己进程里、指向你自己仓库的 coding agent：读文件、改代码、跑你的测试，
+**每一次写入都要过一次权限门**。
+
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
+[![CI](https://github.com/YearsAlso/zoo-code-agent/workflows/CI/badge.svg)](https://github.com/YearsAlso/zoo-code-agent/actions/workflows/ci.yml)
+[![Roadmap](https://img.shields.io/badge/roadmap-Now%20%2F%20Next%20%2F%20Later-informational)](ROADMAP.md)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
 [English](README.md) | **中文**
 
-基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的**最小 coding agent**，mini-claude-code 形态。
+</div>
+
+---
 
 ## 定位
 
+**小是设计，不是成熟度。** 它能做的每件事都有 [`openspec/specs/`](openspec/specs/) 下的规格钉着、
+有 108 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
+**包括它失败的那些运行**。做小，是为了让你在把它指向自己的仓库之前，能把它整个读完。
+
+- **是真的 agent，不是草图**：读文件、改代码、跑测试；会话跨进程重启能续跑；退出码说明它为什么停下来
+  （`0` 完成 / `2` 预算耗尽 / `3` 截止期 / `4` 超时 / `5` 错误）。
+- **写入默认被拦**：不做任何预授权时它是只读的——写与执行一律被拒，除非你授权
+  （`--allow`、审批回调，或可信环境下的 `--approve-all`）。
 - **布局是标准脚手架形态**：`src/` 即项目根，`src/main.py` 是入口，
   `src/{workers,conf,params,events}/` 对应框架的四个扩展点——`zfc --worker` 在本仓库里直接可用。
 - **不是框架的一部分**：本仓库只依赖 PyPI 上已发布的 `zoo-framework`（当前 `>=0.12,<0.13`），不修改框架。
-- **双重目的**：
-  1. **演示** —— 说明怎么用框架搭一个基础 agent。
-  2. **验证** —— 作为框架「Agent 线」（zoo-framework issue #32）的第一个真实消费方，把纸面需求变成可证伪的实测缺口。
+- **它同时也在验证框架**：作为框架「Agent 线」（zoo-framework issue #32）的第一个真实消费方，
+  跑出的缺口已登记为框架 issue（见[四个实测发现](#四个实测发现含后续状态)）。
 
 ## 结构
 
@@ -227,7 +250,8 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 `reset_process_state_carriers()`（保留存档），而不是 `reset_all()`。
 
 漏掉任何一处都会造成真实的假阳性。这也正是 zoo-framework 的
-`.claude/rules/assertion-integrity.md` 警告的失效模式。
+[`assertion-integrity.md`](https://github.com/YearsAlso/zoo-framework/blob/dev/.claude/rules/assertion-integrity.md)
+规则警告的失效模式（那个文件在框架仓库里，不在本仓库）。
 
 ## 状态
 
@@ -251,5 +275,6 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 
 ## 与框架仓库的关系
 
-以 git submodule 形式挂在 zoo-framework 的 `example/agent`。
-克隆框架仓库后需 `git submodule update --init` 才能看到本仓库内容。
+本仓库是**独立仓库**：克隆下来就能跑。它同时以 git submodule 形式挂在 zoo-framework 的
+`example/agent` 下（在那里兼作框架的参考消费方）；克隆框架仓库后需 `git submodule update --init`
+才能看到它。

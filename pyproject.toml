@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "zoo-code-agent"
 version = "0.0.1"
-description = "基于 zoo-framework 的最小 coding agent（标准脚手架布局）"
+description = "跑在你自己进程里的 Python coding agent：读代码、改代码、跑测试，写入过权限门"
 requires-python = ">=3.11"
 dependencies = [
     # 只消费已发布的框架版本，MUST NOT 跟随 dev 主干（见 openspec/changes/add-minimal-agent-loop/design.md D1）

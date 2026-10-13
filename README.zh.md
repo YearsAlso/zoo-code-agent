@@ -247,6 +247,7 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 
 - 测试：**108 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，11 份基线规格 `--strict` 校验通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
+- 下一步：[ROADMAP.md](ROADMAP.md)——Now / Next / Later 三档，每条都带可验证的完成判据。
 
 ## 与框架仓库的关系
 

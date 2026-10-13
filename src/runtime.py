@@ -30,6 +30,9 @@ class SessionState:
 
     权限策略同样按会话：同一次运行里，只读探查与"允许改文件"是两种授权，不该互相污染。
     生命周期钩子与权限策略同构——也按会话持有，运行期是真源。
+
+    模型客户端也允许**按会话覆盖**：并发跑多条任务时，脚本化模型的游标是"谁先到谁用"，
+    共用一个实例会让两条任务互相顶掉；为 ``None`` 时用运行期那一个。
     """
 
     def __init__(
@@ -38,6 +41,7 @@ class SessionState:
         root: Path,
         policy: PermissionPolicy | None = None,
         hooks: Hooks | None = None,
+        model: ModelClient | None = None,
     ) -> None:
         self.session_id = session_id
         self.store = SessionStore(session_id)
@@ -45,6 +49,7 @@ class SessionState:
         self.ledger.restore(self.store.get(LEDGER_KEY))
         self.policy = policy or PermissionPolicy()
         self.hooks = hooks
+        self.model = model
         self.registry: ToolRegistry = default_registry(root, self.ledger)
 
     def _persist_ledger(self, snapshot: dict[str, Any]) -> None:

@@ -181,7 +181,9 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
     """向模型要一次响应，并把工具调用挂成待执行。"""
     state = runtime.session(session_id)
     store = state.store
-    if runtime.model is None:
+    # 会话自己的客户端优先：并发跑多条任务时每条一个（见 ``SessionState.model``）。
+    model = state.model or runtime.model
+    if model is None:
         raise RuntimeError("运行期尚未配置模型；请先调用 AgentRuntime.configure()")
 
     turn = len(store.by_role("assistant")) + 1
@@ -189,7 +191,7 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
     _set_phase(state, PHASE_THINKING)
     # 输入侧记账：真实用量以提供方返回的 usage 为准，这里的估算值只参与预算与压缩判断。
     store.set("input_tokens_estimated", estimate_tokens("".join(item.content for item in messages)))
-    response = runtime.model.complete(messages, state.registry.declarations())
+    response = model.complete(messages, state.registry.declarations())
 
     tool_calls = [
         {"call_id": call.call_id, "name": call.name, "arguments": dict(call.arguments)}

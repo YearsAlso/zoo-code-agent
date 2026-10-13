@@ -339,3 +339,31 @@ def test_sigint_is_turned_into_a_cancel_request() -> None:
 
 def test_cancelled_maps_to_its_own_exit_code() -> None:
     assert cli.STOP_TO_EXIT["cancelled"] == cli.EXIT_CANCELLED
+
+
+def test_batch_mode_hands_tasks_to_the_master(tmp_path, sandbox) -> None:
+    """``--tasks``：一批提示交给 Master 逐条派发，一条一行结果。"""
+    task_file = tmp_path / "tasks.txt"
+    task_file.write_text("# 一批活\n第一件事\n第二件事\n", encoding="utf-8")
+    script = _script_file(tmp_path, [{"text": "好了。", "tokens": 5}])
+    out = io.StringIO()
+
+    code = cli.main(
+        [
+            "--tasks",
+            str(task_file),
+            "--script",
+            str(script),
+            "--root",
+            str(sandbox),
+            "--concurrency",
+            "1",
+        ],
+        out=out,
+        stdin=io.StringIO(""),
+    )
+
+    assert code == cli.EXIT_OK
+    text = out.getvalue()
+    assert "[task 0]" in text and "[task 1]" in text
+    assert "stop=model_stopped" in text

@@ -83,7 +83,7 @@ def build_master(
     *,
     model: ModelClient,
     session_id: str,
-    prompt: str,
+    prompt: str | None = None,
     root: Path | str = ".",
     budget: int = DEFAULT_BUDGET,
     timeout_seconds: float | None = None,
@@ -95,7 +95,8 @@ def build_master(
     Args:
         model: 模型客户端。
         session_id: 会话标识，同时用作状态作用域名。
-        prompt: 首次的用户输入。
+        prompt: 首次的用户输入。``None`` 表示**不起会话**——批量派发时由每条任务的
+            Worker 自己起（见 ``dispatch``），装配阶段只负责把运行期准备好。
         root: 只读工具的根目录。
         budget: token 预算上限。
         timeout_seconds: 截止期（相对秒数）；``None`` 表示不设。
@@ -116,10 +117,13 @@ def build_master(
         model=model, root=root, budget=budget, deadline=deadline, policy=policy, hooks=hooks
     )
     register_tool_reactor()
-    start_session(runtime, session_id, prompt)
+    if prompt is not None:
+        start_session(runtime, session_id, prompt)
 
     master = Master()
-    master.register_worker("AgentLoop", make_agent_worker(session_id))
+    if prompt is not None:
+        # 不起会话就不挂长驻循环 Worker：批量派发由 ``dispatch`` 注册自己的 Worker。
+        master.register_worker("AgentLoop", make_agent_worker(session_id))
     return master
 
 

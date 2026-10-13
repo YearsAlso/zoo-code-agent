@@ -22,14 +22,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from agent import build_master, drive_session
 from loop import continue_session
 from model import ModelClient, ScriptedClient
-from permissions import PermissionPolicy
+from permissions import PermissionPolicy, PermissionRequest
 from runtime import AgentRuntime, reset_all
 
 EXIT_OK = 0
@@ -122,12 +122,47 @@ def build_model(args: argparse.Namespace) -> ModelClient:
     return AnthropicClient(**kwargs)
 
 
-def build_policy(args: argparse.Namespace) -> PermissionPolicy:
-    """按参数构造准入策略；默认只读。"""
+def _can_prompt(args: argparse.Namespace, stdin: TextIO) -> bool:
+    """能否当场问使用者：不是 JSON 模式，且 stdin 真的是终端。
+
+    管道、CI、`--json` 都算非交互——那时等一个永远不会来的输入，比直接拒绝更糟。
+    """
+    return not args.json and bool(getattr(stdin, "isatty", lambda: False)())
+
+
+def _interactive_approver(stdin: TextIO, out: TextIO) -> Callable[[PermissionRequest], bool]:
+    """把一次待批请求展示出来，读一行 y/N。
+
+    展示的是 ``PermissionRequest.summary``（工具名 + 实参），让人能当场判断，而不是盲按回车。
+    读不到输入（EOF）按拒绝处理。
+    """
+
+    def approve(request: PermissionRequest) -> bool:
+        out.write(f"\n[需要审批] {request.summary}\n允许执行？[y/N] ")
+        out.flush()
+        answer = stdin.readline().strip().lower()
+        return answer in {"y", "yes"}
+
+    return approve
+
+
+def build_policy(args: argparse.Namespace, *, stdin: TextIO, out: TextIO) -> PermissionPolicy:
+    """按参数构造准入策略。
+
+    三档，从宽到严：``--approve-all`` → 预授权/交互询问 → **失败关闭的只读**。
+    默认（不给 ``--allow``、不在终端里）是只读；在终端里则逐次询问。
+    """
     allowed = {name.strip() for name in args.allow.split(",") if name.strip()}
     if args.approve_all:
         return PermissionPolicy(allowed=allowed, approver=lambda _request: True)
-    return PermissionPolicy(allowed=allowed)
+    if _can_prompt(args, stdin):
+        return PermissionPolicy(allowed=allowed, approver=_interactive_approver(stdin, out))
+    return PermissionPolicy(
+        allowed=allowed,
+        no_approver_hint=(
+            "非交互环境不会等待输入；用 --allow <工具名> 预授权，或在终端里运行以获得逐次询问"
+        ),
+    )
 
 
 def _render(event: dict[str, Any], *, json_mode: bool, out: TextIO) -> None:
@@ -185,8 +220,8 @@ def _exit_code(summary: dict[str, Any]) -> int:
     return STOP_TO_EXIT.get(str(summary.get("stop_reason")), EXIT_ERROR)
 
 
-def run_once(args: argparse.Namespace, *, out: TextIO) -> int:
-    """无头单次执行。"""
+def run_once(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
+    """单次执行（在终端里运行时，写 / 执行会逐次询问）。"""
     reset_all()
     master = build_master(
         model=build_model(args),
@@ -195,7 +230,7 @@ def run_once(args: argparse.Namespace, *, out: TextIO) -> int:
         root=args.root,
         budget=args.budget,
         timeout_seconds=None,
-        policy=build_policy(args),
+        policy=build_policy(args, stdin=stdin, out=out),
     )
     try:
         summary = _drive(
@@ -251,7 +286,7 @@ def repl(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
                     root=args.root,
                     budget=args.budget,
                     timeout_seconds=None,
-                    policy=build_policy(args),
+                    policy=build_policy(args, stdin=stdin, out=out),
                 )
                 first = False
             else:
@@ -296,7 +331,7 @@ def main(
 
     try:
         if args.prompt:
-            return run_once(args, out=stream_out)
+            return run_once(args, out=stream_out, stdin=stream_in)
         if args.interactive:
             return repl(args, out=stream_out, stdin=stream_in)
         stream_out.write('[error] 需要 -p "<提示>" 或 -i（交互式）\n')

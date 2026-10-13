@@ -90,10 +90,11 @@ python src/main.py --eval                                          # task-level 
 **Exit codes** say why the run ended, so scripts can branch on them: `0` finished / `2` budget
 exhausted / `3` deadline reached / `4` timeout / `5` error.
 
-**Read-only by default.** With no pre-authorization every write or exec call is refused. To let it
-change code, pass `--allow`; in a trusted environment you can use `--approve-all`. There is no
-interactive approval UI yet, and [`src/permissions.py`](src/permissions.py) says so in its module
-docstring.
+**Read-only by default — and writes ask first.** In a terminal, every write or exec call stops for a
+y/N; the prompt shows the tool and its arguments. With no pre-authorization *and* no terminal (a
+pipe, CI, `--json`) the call is **refused** rather than queued — waiting for input that will never
+come is worse than failing. `--allow write_file,edit_file,run_shell` pre-authorizes, and
+`--approve-all` removes the gate entirely (trusted environments only).
 
 **Streaming is step-level**, not token-level: each model response and tool result is printed as it
 happens, while `ModelClient.complete` still returns a whole response at once.
@@ -160,10 +161,8 @@ fix empty-input handling; resume a session across a process restart without repe
 side effect.
 
 **Cannot** (current version, stated plainly): pass by editing the test (the benchmark fails you —
-that is the design, not a defect); there is no interactive approval UI (write/exec rely on
-pre-authorization or an approver callback, and the default denies everything); there is no sandbox
-(`run_shell`'s boundary is the working directory plus the permission gate, not isolation); the real
-model path is untested here.
+that is the design, not a defect); there is no sandbox (`run_shell`'s boundary is the working
+directory plus the permission gate, not isolation); the real model path is untested here.
 
 ### One measured lesson: turning on the push model is not enough
 

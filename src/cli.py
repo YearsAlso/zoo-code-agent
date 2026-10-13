@@ -22,18 +22,20 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import queue
 import signal
 import sys
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
+import agent_events
 from agent import build_master, drive_session
 from dispatch import dispatch_tasks, load_tasks
 from loop import STOP_CANCELLED, continue_session
 from model import ModelClient, ScriptedClient
-from permissions import PermissionPolicy, PermissionRequest
+from permissions import PermissionPolicy
 from runtime import AgentRuntime, reset_all
 
 EXIT_OK = 0
@@ -97,7 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tasks",
         type=Path,
-        help="批量任务文件（一行一个提示，# 开头为注释）；交给 Master 逐条派发",
+        help=(
+            "批量任务文件（一行一个提示，# 开头为注释）；交给 Master 逐条派发。"
+            "批量按无人值守处理：不逐次询问，未预授权的写 / 执行会被拒绝"
+        ),
     )
     parser.add_argument("--concurrency", type=int, default=2, help="批量任务的并发上限")
     return parser
@@ -145,33 +150,61 @@ def _can_prompt(args: argparse.Namespace, stdin: TextIO) -> bool:
     return not args.json and bool(getattr(stdin, "isatty", lambda: False)())
 
 
-def _interactive_approver(stdin: TextIO, out: TextIO) -> Callable[[PermissionRequest], bool]:
-    """把一次待批请求展示出来，读一行 y/N。
+def _start_approval_resolver(*, stdin: TextIO, out: TextIO) -> threading.Thread:
+    """起一个**独立线程**处理审批：请求入队、提示、读一行、把决定发布回去。
 
-    展示的是 ``PermissionRequest.summary``（工具名 + 实参），让人能当场判断，而不是盲按回车。
-    读不到输入（EOF）按拒绝处理。
+    为什么不直接在订阅回调里问：订阅回调由发布方（工具反应器）在自己的线程里**同步**调用，
+    在里面读终端等于把事件线程堵在等人上（框架侧会留下一条 "reactors were still running
+    after the join timeout" 告警）。所以订阅回调只入队、瞬时返回；提示与读输入发生在这里。
+
+    读不到输入（EOF）按拒绝处理——与"非交互失败关闭"同一条原则。
     """
+    pending: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    agent_events.subscribe(on_approval=pending.put)
 
-    def approve(request: PermissionRequest) -> bool:
-        out.write(f"\n[需要审批] {request.summary}\n允许执行？[y/N] ")
-        out.flush()
-        answer = stdin.readline().strip().lower()
-        return answer in {"y", "yes"}
+    def serve() -> None:
+        while True:
+            item = pending.get()
+            if item is None:
+                return
+            out.write(f"\n[需要审批] {item['summary']}\n允许执行？[y/N] ")
+            out.flush()
+            allowed = stdin.readline().strip().lower() in {"y", "yes"}
+            agent_events.publish(
+                agent_events.DECISION_TOPIC,
+                {
+                    "type": "approval_decided",
+                    "session_id": item["session_id"],
+                    "call_id": item["call_id"],
+                    "allowed": allowed,
+                    "reason": "使用者放行" if allowed else "使用者拒绝",
+                },
+            )
 
-    return approve
+    thread = threading.Thread(target=serve, name="zca-approval", daemon=True)
+    thread.start()
+    return thread
 
 
-def build_policy(args: argparse.Namespace, *, stdin: TextIO, out: TextIO) -> PermissionPolicy:
+def build_policy(
+    args: argparse.Namespace, *, stdin: TextIO, allow_prompt: bool = True
+) -> PermissionPolicy:
     """按参数构造准入策略。
 
     三档，从宽到严：``--approve-all`` → 预授权/交互询问 → **失败关闭的只读**。
     默认（不给 ``--allow``、不在终端里）是只读；在终端里则逐次询问。
+
+    ``allow_prompt=False`` 表示"这次按**无人值守**处理"：即便 stdin 是终端也不逐次询问，
+    直接失败关闭。批量（``--tasks``）用它——一批活不该卡在等人的提问上；要放行就显式
+    ``--allow``。
     """
     allowed = {name.strip() for name in args.allow.split(",") if name.strip()}
     if args.approve_all:
         return PermissionPolicy(allowed=allowed, approver=lambda _request: True)
-    if _can_prompt(args, stdin):
-        return PermissionPolicy(allowed=allowed, approver=_interactive_approver(stdin, out))
+    if allow_prompt and _can_prompt(args, stdin):
+        # 在终端里那一档用 defer_approval：审批**挂起**等外部决定，而不是在工具反应器里
+        # 阻塞（决定由 ``_start_approval_resolver`` 起的线程发布）。
+        return PermissionPolicy(allowed=allowed, defer_approval=True)
     return PermissionPolicy(
         allowed=allowed,
         no_approver_hint=(
@@ -260,6 +293,9 @@ def _cancel_on_interrupt(session_id: str):
 def run_once(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
     """单次执行（在终端里运行时，写 / 执行会逐次询问）。"""
     reset_all()
+    policy = build_policy(args, stdin=stdin)
+    if policy.defers_approval:
+        _start_approval_resolver(stdin=stdin, out=out)
     master = build_master(
         model=build_model(args),
         session_id=args.session,
@@ -267,7 +303,7 @@ def run_once(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
         root=args.root,
         budget=args.budget,
         timeout_seconds=None,
-        policy=build_policy(args, stdin=stdin, out=out),
+        policy=policy,
     )
     try:
         with _cancel_on_interrupt(args.session):
@@ -296,6 +332,9 @@ def run_batch(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
 
     MUST NOT 起那条"长驻循环 Worker"——装配阶段只准备运行期（``prompt=None``），
     会话由每条任务的 Worker 自己起。
+
+    批量按**无人值守**处理（``allow_prompt=False``）：即便在终端里也不逐次询问，未预授权的
+    写 / 执行直接失败关闭。一批活卡在"等人按 y"上比被拒绝更糟；要放行请显式 ``--allow``。
     """
     reset_all()
     tasks = load_tasks(args.tasks)
@@ -310,7 +349,7 @@ def run_batch(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
         root=args.root,
         budget=args.budget,
         timeout_seconds=None,
-        policy=build_policy(args, stdin=stdin, out=out),
+        policy=build_policy(args, stdin=stdin, allow_prompt=False),
     )
     try:
         results = dispatch_tasks(
@@ -356,6 +395,9 @@ def repl(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
     runtime = AgentRuntime()
     first = True
     master: Any = None
+    policy = build_policy(args, stdin=stdin)
+    if policy.defers_approval:
+        _start_approval_resolver(stdin=stdin, out=out)
 
     if not args.json:
         out.write("交互模式：输入任务，/exit 或 Ctrl-D 退出。\n")
@@ -383,7 +425,7 @@ def repl(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
                     root=args.root,
                     budget=args.budget,
                     timeout_seconds=None,
-                    policy=build_policy(args, stdin=stdin, out=out),
+                    policy=policy,
                 )
                 first = False
             else:

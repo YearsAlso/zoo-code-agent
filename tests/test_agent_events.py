@@ -24,7 +24,7 @@ def test_publish_reaches_a_bound_reactor_and_is_a_noop_without_subscribers() -> 
     agent_events.publish(agent_events.EVENT_TOPIC, {"type": "model_response"})
     assert seen == [{"type": "model_response"}]
 
-    agent_events.subscribe()  # 解绑
+    agent_events.subscribe(on_event=None)  # 解绑这一路
     agent_events.publish(agent_events.EVENT_TOPIC, {"type": "model_response"})
     assert seen == [{"type": "model_response"}], "没有订阅者时 MUST NOT 出事"
 

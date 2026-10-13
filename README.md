@@ -122,6 +122,10 @@ pipe, CI, `--json`) the call is **refused** rather than queued — waiting for i
 come is worse than failing. `--allow write_file,edit_file,run_shell` pre-authorizes, and
 `--approve-all` removes the gate entirely (trusted environments only).
 
+That prompt is a **deferred decision**, not a blocking read: the call is parked in session state, a
+request goes out on a topic, and a decision comes back on another one. The event thread is never
+held hostage by a human — and "waiting for approval" is a real session phase you can query.
+
 **Streaming is step-level**, not token-level: each model response and tool result is printed as it
 happens, while `ModelClient.complete` still returns a whole response at once.
 

@@ -367,3 +367,41 @@ def test_batch_mode_hands_tasks_to_the_master(tmp_path, sandbox) -> None:
     text = out.getvalue()
     assert "[task 0]" in text and "[task 1]" in text
     assert "stop=model_stopped" in text
+
+
+def test_batch_mode_is_unattended_and_fails_closed(tmp_path, sandbox) -> None:
+    """批量按无人值守处理：即便在终端里也**不**逐次询问，未预授权的写直接失败关闭。
+
+    这里刻意给一个"会回答 y"的假终端——如果实现错误地走了交互路径，文件就会被创建。
+    """
+    task_file = tmp_path / "tasks.txt"
+    task_file.write_text("写一个文件\n", encoding="utf-8")
+    script = _script_file(
+        tmp_path,
+        [
+            {
+                "text": "写文件。",
+                "tokens": 5,
+                "tool_calls": [
+                    {
+                        "call_id": "w1",
+                        "name": "write_file",
+                        "arguments": {"path": "x.txt", "content": "ok"},
+                    }
+                ],
+            }
+        ],
+    )
+    out = io.StringIO()
+
+    code = cli.main(
+        ["--tasks", str(task_file), "--script", str(script), "--root", str(sandbox)],
+        out=out,
+        stdin=_FakeTTY("y\n"),
+    )
+
+    assert code != cli.EXIT_OK, "活没干成，就不该报成功"
+    assert not (sandbox / "x.txt").exists(), "无人值守：MUST NOT 因为回答了 y 就放行"
+    assert "[需要审批]" not in out.getvalue(), "批量 MUST NOT 逐次询问"
+    records = AgentRuntime().session("task-01").store.by_role("tool")
+    assert records and "--allow" in records[0]["content"], "拒绝理由要给出路"

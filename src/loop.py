@@ -15,6 +15,7 @@ from typing import Any
 from zoo_framework.event.event_channel_manager import EventChannelManager
 from zoo_framework.fifo.node.event_fifo_node import EventNode
 from zoo_framework.reactor.event_reactor import EventReactor
+from zoo_framework.reactor.event_reactor_manager import EventReactorManager
 from zoo_framework.reactor.event_retry_strategy import EventRetryStrategy
 from zoo_framework.workers.base_worker import BaseWorker
 
@@ -22,6 +23,7 @@ import agent_events
 from context import compact_view, estimate_tokens
 from hooks import decide_pre_tool, notify_on_stop, notify_post_tool
 from model import Message, ToolCall
+from permissions import GATE_ASK, GATE_DENY, summarize_call
 from runtime import AgentRuntime, SessionState
 from session import SessionStore
 from tools import ToolError
@@ -39,9 +41,16 @@ STOP_REASONS = (STOP_BUDGET, STOP_DEADLINE, STOP_MODEL, STOP_CANCELLED)
 
 PHASE_THINKING = "thinking"
 PHASE_TOOLS = "tools_pending"
+PHASE_APPROVAL = "awaiting_approval"
 PHASE_STOPPED = "stopped"
-PHASES = (PHASE_THINKING, PHASE_TOOLS, PHASE_STOPPED)
-"""会话阶段：向模型要响应 / 等工具结果 / 已终止。落进状态，可查询、可断言。"""
+PHASES = (PHASE_THINKING, PHASE_TOOLS, PHASE_APPROVAL, PHASE_STOPPED)
+"""会话阶段：向模型要响应 / 等工具结果 / **等审批** / 已终止。落进状态，可查询、可断言。"""
+
+APPROVAL_KEY = "pending_approval"
+"""待批调用在会话状态里的键名：``call_id -> {name, arguments, turn}``。"""
+
+APPROVAL_REACTOR_NAME = "on_approval_decision"
+"""审批决定反应器名。"""
 
 _append_lock = threading.Lock()
 """落盘与发布的互斥。
@@ -69,6 +78,7 @@ def start_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
     state.store.set("tokens_spent", 0)
     state.store.set("stop_reason", None)
     state.store.set("cancel_requested", False)
+    state.store.set(APPROVAL_KEY, {})
     state.store.set("phase", PHASE_THINKING)
 
 
@@ -329,27 +339,48 @@ def on_tool_call(request: Any) -> None:
         return
 
     tool = state.registry.get(payload["name"])
+    gate = state.policy.precheck(tool.name, requires_approval=tool.requires_approval)
+    if gate.decision == GATE_DENY:
+        # 失败关闭：没有审批者、也不是"可挂起"，这一条就是终局。
+        _finish(state, payload, f"工具被拒绝（{gate.reason}）：{tool.name}")
+        return
+    if gate.decision == GATE_ASK and state.policy.defers_approval:
+        # 挂起：请求进状态、发一条事件，本反应器立刻返回——**不在这里等人**。
+        _defer_approval(state, payload)
+        return
+
     verdict = state.policy.assess(
         tool.name, payload["arguments"], requires_approval=tool.requires_approval
     )
     if not verdict.allowed:
         # 拒绝不是异常：写成一条观察回灌给模型，让它换一条路；会话不因此崩掉。
         # 同时它也是可断言的事实——"没被执行"和"执行后返回空"必须能区分开。
-        result = f"工具被拒绝（{verdict.reason}）：{tool.name}"
-    else:
-        # 权限门已放行，才轮到 pre_tool 管"怎么做"——它不能把上面的拒绝翻回来。
-        decision = decide_pre_tool(state.hooks, tool.name, payload["arguments"])
-        if not decision.allow:
-            result = f"工具被拒绝（pre_tool：{decision.reason}）：{tool.name}"
-        else:
-            arguments = payload["arguments"] if decision.arguments is None else decision.arguments
-            try:
-                result = tool.handler(dict(arguments))
-            except ToolError as exc:
-                result = f"工具失败：{exc}"
-            # post_tool 只在执行体真的被进入后通知；被拒绝的调用不触发。
-            notify_post_tool(state.hooks, tool.name, arguments, result)
+        _finish(state, payload, f"工具被拒绝（{verdict.reason}）：{tool.name}")
+        return
 
+    _finish(state, payload, _run_tool(state, tool, payload))
+
+
+def _run_tool(state: SessionState, tool: Any, payload: dict[str, Any]) -> str:
+    """执行体（含 pre_tool / post_tool），返回要回灌的观察文本。
+
+    权限门已放行，才轮到 ``pre_tool`` 管"怎么做"——它不能把上面的拒绝翻回来。
+    """
+    decision = decide_pre_tool(state.hooks, tool.name, payload["arguments"])
+    if not decision.allow:
+        return f"工具被拒绝（pre_tool：{decision.reason}）：{tool.name}"
+    arguments = payload["arguments"] if decision.arguments is None else decision.arguments
+    try:
+        result = tool.handler(dict(arguments))
+    except ToolError as exc:
+        result = f"工具失败：{exc}"
+    # post_tool 只在执行体真的被进入后通知；被拒绝的调用不触发。
+    notify_post_tool(state.hooks, tool.name, arguments, result)
+    return result
+
+
+def _finish(state: SessionState, payload: dict[str, Any], result: str) -> None:
+    """写一条工具观察，并把这个调用标记完成。"""
     _append(
         state,
         {"type": "tool_result", "name": payload["name"], "content": result},
@@ -365,6 +396,83 @@ def on_tool_call(request: Any) -> None:
 def _call_done(state: SessionState, call_id: str) -> bool:
     pending = state.store.get("pending", [])
     return any(item.get("call_id") == call_id and item.get("done") for item in pending)
+
+
+def _defer_approval(state: SessionState, payload: dict[str, Any]) -> None:
+    """把一次待批调用挂起：请求进状态、发一条审批事件，**不阻塞**。
+
+    状态里留一份（``pending_approval``）有两个用处：决定回来时知道要执行哪一次调用；
+    进程重启续跑时那条调用会被重新派发、于是**重新问一次**，而不是静默挂起。
+    """
+    waiting = dict(state.store.get(APPROVAL_KEY, {}))
+    waiting[payload["call_id"]] = {
+        "name": payload["name"],
+        "arguments": dict(payload["arguments"]),
+        "turn": payload["turn"],
+    }
+    state.store.set(APPROVAL_KEY, waiting)
+    _set_phase(state, PHASE_APPROVAL)
+    agent_events.publish(
+        agent_events.APPROVAL_TOPIC,
+        {
+            "type": "approval_requested",
+            "session_id": payload["session_id"],
+            "call_id": payload["call_id"],
+            "turn": payload["turn"],
+            "name": payload["name"],
+            "arguments": dict(payload["arguments"]),
+            "summary": summarize_call(payload["name"], payload["arguments"]),
+        },
+    )
+
+
+def on_approval_decision(request: Any) -> None:
+    """审批决定反应器：执行或拒绝那条被挂起的调用。
+
+    幂等：决定可能被重复投递（重试、重放），而 ``pending_approval`` 里没有这条就说明已经
+    处理过——直接忽略，MUST NOT 再写第二条观察。
+    """
+    payload = request.content
+    state = AgentRuntime().session(payload["session_id"])
+    call_id = payload["call_id"]
+
+    waiting = dict(state.store.get(APPROVAL_KEY, {}))
+    item = waiting.pop(call_id, None)
+    if item is None or _call_done(state, call_id):
+        return
+    state.store.set(APPROVAL_KEY, waiting)
+
+    call = {
+        "session_id": payload["session_id"],
+        "call_id": call_id,
+        "name": item["name"],
+        "arguments": item["arguments"],
+        "turn": item["turn"],
+    }
+    tool = state.registry.get(item["name"])
+    if payload.get("allowed"):
+        _finish(state, call, _run_tool(state, tool, call))
+    else:
+        reason = payload.get("reason") or "审批未通过"
+        _finish(state, call, f"工具被拒绝（{reason}）：{tool.name}")
+    if not waiting:
+        _set_phase(state, PHASE_TOOLS)
+
+
+def register_approval_reactor() -> EventReactor:
+    """把审批决定反应器挂到决定主题上（显式注册，理由同 ``register_tool_reactor``）。
+
+    按名字判重：``bind_topic_reactor`` 只对**同一个对象**幂等，每次装配都新建一个会把上一次
+    留在注册表里，同一份决定于是被处理两次。
+    """
+    existing = EventReactorManager().reactor_map.get(agent_events.DECISION_TOPIC)
+    for reactor in list(existing or []):
+        if reactor.reactor_name == APPROVAL_REACTOR_NAME:
+            return reactor
+    reactor = EventReactor(APPROVAL_REACTOR_NAME)
+    reactor.set_event_callback(on_approval_decision)
+    EventReactorManager().bind_topic_reactor(agent_events.DECISION_TOPIC, reactor)
+    return reactor
 
 
 def _mark_done(state: SessionState, call_id: str) -> None:

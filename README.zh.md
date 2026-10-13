@@ -1,8 +1,23 @@
-# zoo-code-agent
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg"/>
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo.svg"/>
+  <img src="docs/assets/logo.svg" alt="zoo-code-agent" width="300"/>
+</picture>
+
+**zoo-code-agent** —— 基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的
+**最小 coding agent**，mini-claude-code 形态。
+
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
+[![CI](https://github.com/YearsAlso/zoo-code-agent/workflows/CI/badge.svg)](https://github.com/YearsAlso/zoo-code-agent/actions/workflows/ci.yml)
+[![Roadmap](https://img.shields.io/badge/roadmap-Now%20%2F%20Next%20%2F%20Later-informational)](ROADMAP.md)
 
 [English](README.md) | **中文**
 
-基于 [zoo-framework](https://github.com/YearsAlso/zoo-framework) 的**最小 coding agent**，mini-claude-code 形态。
+</div>
+
+---
 
 ## 定位
 

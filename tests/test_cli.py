@@ -15,6 +15,29 @@ def _script_file(tmp_path: Path, payload) -> Path:
     return path
 
 
+class _FakeTTY(io.StringIO):
+    """冒充终端：`isatty()` 为真，交互式审批才会真的问。"""
+
+    def isatty(self) -> bool:
+        return True
+
+
+WRITE_FILE_SCRIPT = [
+    {
+        "text": "写个文件。",
+        "tokens": 5,
+        "tool_calls": [
+            {
+                "call_id": "w1",
+                "name": "write_file",
+                "arguments": {"path": "x.txt", "content": "ok"},
+            }
+        ],
+    },
+    {"text": "写好了。", "tokens": 5},
+]
+
+
 ONE_TOOL_CALL = [
     {
         "text": "先看看。",
@@ -200,3 +223,103 @@ def test_script_must_be_a_json_array(tmp_path, sandbox) -> None:
     )
 
     assert code == cli.EXIT_ERROR
+
+
+def test_interactive_approval_asks_before_writing(tmp_path, sandbox) -> None:
+    """在终端里运行时，写文件 MUST 先问，且问题里带上工具名与实参。"""
+    out = io.StringIO()
+    stdin = _FakeTTY("y\n")
+
+    code = cli.main(
+        [
+            "-p",
+            "写文件",
+            "--script",
+            str(_script_file(tmp_path, WRITE_FILE_SCRIPT)),
+            "--root",
+            str(sandbox),
+        ],
+        out=out,
+        stdin=stdin,
+    )
+
+    assert code == cli.EXIT_OK
+    assert "[需要审批]" in out.getvalue()
+    assert "write_file" in out.getvalue() and "x.txt" in out.getvalue()
+    assert (sandbox / "x.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_interactive_approval_refusal_leaves_no_trace(tmp_path, sandbox) -> None:
+    """回答否（或直接回车）：不落盘，会话继续走。"""
+    stdin = _FakeTTY("\n")
+
+    code = cli.main(
+        [
+            "-p",
+            "写文件",
+            "--script",
+            str(_script_file(tmp_path, WRITE_FILE_SCRIPT)),
+            "--root",
+            str(sandbox),
+        ],
+        out=io.StringIO(),
+        stdin=stdin,
+    )
+
+    assert code == cli.EXIT_OK
+    assert not (sandbox / "x.txt").exists()
+    from runtime import AgentRuntime
+
+    tool_records = AgentRuntime().session("cli").store.by_role("tool")
+    assert "被拒绝" in tool_records[0]["content"]
+
+
+def test_non_interactive_denies_with_an_actionable_hint(tmp_path, sandbox) -> None:
+    """非 tty（管道 / CI）不等待输入，直接拒绝，且理由要告诉人怎么办。"""
+    out = io.StringIO()
+
+    code = cli.main(
+        # io.StringIO 的 isatty() 为 False —— 等价于管道里的调用
+        [
+            "-p",
+            "写文件",
+            "--script",
+            str(_script_file(tmp_path, WRITE_FILE_SCRIPT)),
+            "--root",
+            str(sandbox),
+        ],
+        out=out,
+        stdin=io.StringIO(""),
+    )
+
+    assert code == cli.EXIT_OK
+    assert not (sandbox / "x.txt").exists()
+    from runtime import AgentRuntime
+
+    reason = AgentRuntime().session("cli").store.by_role("tool")[0]["content"]
+    assert "非交互环境不会等待输入" in reason
+    assert "--allow" in reason
+
+
+def test_preauthorized_tool_is_not_asked_again(tmp_path, sandbox) -> None:
+    """`--allow` 优先于询问：预授权的工具不打扰使用者。"""
+    out = io.StringIO()
+
+    code = cli.main(
+        [
+            "-p",
+            "写文件",
+            "--script",
+            str(_script_file(tmp_path, WRITE_FILE_SCRIPT)),
+            "--root",
+            str(sandbox),
+            "--allow",
+            "write_file",
+        ],
+        out=out,
+        stdin=_FakeTTY(""),
+    )
+
+    assert code == cli.EXIT_OK
+    assert "[需要审批]" not in out.getvalue()
+    assert (sandbox / "x.txt").read_text(encoding="utf-8") == "ok"

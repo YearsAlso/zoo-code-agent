@@ -62,6 +62,8 @@ class PermissionPolicy:
         allowed: 预先授权的工具名集合。命中即放行，不再询问——用于"这个会话里允许改文件"
             这类粗粒度授权。
         approver: 逐次审批回调；返回真值表示放行。抛异常按**拒绝**处理（失败关闭）。
+        no_approver_hint: 没有审批者时的拒绝理由。默认是通用措辞；命令行会传一句更可操作的
+            （"非交互环境不会等待输入；用 --allow 预授权"）。库层不假设自己跑在 CLI 里。
     """
 
     def __init__(
@@ -69,9 +71,11 @@ class PermissionPolicy:
         *,
         allowed: Iterable[str] = (),
         approver: Callable[[PermissionRequest], bool] | None = None,
+        no_approver_hint: str | None = None,
     ) -> None:
         self._allowed = frozenset(allowed)
         self._approver = approver
+        self._no_approver_hint = no_approver_hint
 
     def assess(
         self, tool_name: str, arguments: Mapping[str, Any], *, requires_approval: bool
@@ -82,7 +86,10 @@ class PermissionPolicy:
         if tool_name in self._allowed:
             return PermissionVerdict(True, "在预授权名单内")
         if self._approver is None:
-            return PermissionVerdict(False, "该操作需要审批，但当前没有配置审批者（失败关闭）")
+            return PermissionVerdict(
+                False,
+                self._no_approver_hint or "该操作需要审批，但当前没有配置审批者（失败关闭）",
+            )
 
         request = PermissionRequest(tool_name, dict(arguments), _summarize(tool_name, arguments))
         try:

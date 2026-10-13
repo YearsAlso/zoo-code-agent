@@ -155,6 +155,8 @@ Four capabilities — `agent-loop` / `model-client` / `tool-invocation` / `sessi
   counts estimated input plus reported output.
 - **Hooks**: three lifecycle extension points — `pre_tool` (deny, or **rewrite arguments**),
   `post_tool` (observe the result), `on_stop` (session teardown). Off by default.
+- **Skills**: progressive-disclosure instruction packs under `skills/<name>/SKILL.md`; the prompt
+  lists only the name and one line, and `read_skill(name)` loads the body on demand.
 
 ## Extending it: lifecycle hooks
 
@@ -181,6 +183,36 @@ master = build_master(model=client, session_id="s", prompt="...", root=".", hook
 A hook raising is **failure-closed**: `pre_tool`'s exception denies the call and the reason carries
 it; `post_tool` / `on_stop` exceptions are swallowed, because by then the result and the stop reason
 are already committed.
+
+## Write your own skill
+
+A skill is a folder of instructions loaded **on demand** — the prompt lists only its name and one
+line, and the model pulls the body in with one tool call. Put it under `skills/<name>/SKILL.md`:
+
+```
+skills/
+└── migration-check/
+    └── SKILL.md
+```
+
+```markdown
+---
+name: migration-check
+description: 改数据库 schema 时，先核对迁移脚本再动 ORM 模型
+---
+1. Find the migrations directory and list existing scripts.
+2. New migrations must be idempotent (`IF NOT EXISTS`, `DO $$ ... $$`).
+3. Ship a rollback script; wrap the DDL in one transaction.
+```
+
+The system prompt gets `migration-check: <description>` and nothing else; calling
+`read_skill("migration-check")` returns the body as a tool observation. The tool is read-only, so
+the permission gate lets it through by default — and a `pre_tool` hook can still gate it if you want
+(see the hooks section above). An unknown name errors and lists what is available; it never returns
+an empty body.
+
+The description line's fallbacks: omit the frontmatter and the name defaults to the folder name,
+the description to the first non-empty line of the body.
 
 ## Task-level benchmark: what it can do, in numbers
 

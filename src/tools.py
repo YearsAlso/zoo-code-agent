@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from model import ToolDeclaration
+from skills import load_skills
 
 
 class ToolError(RuntimeError):
@@ -535,11 +536,42 @@ def paid_lookup_tool(ledger: IdempotencyLedger) -> Tool:
     )
 
 
+def read_skill_tool(root: Path) -> Tool:
+    """构造只读的「读技能」工具：按需把一份技能的正文读进来。
+
+    只接受**已被发现**的技能名（来自 ``skills/<name>/SKILL.md``），因此名字里带路径分隔符
+    也匹配不上——不需要再做一遍路径校验。未知名字报错并列出可用技能，而不是静默返回空。
+    """
+
+    def handler(arguments: dict[str, Any]) -> str:
+        catalog = {skill.name: skill for skill in load_skills(root)}
+        name = str(arguments["name"])
+        skill = catalog.get(name)
+        if skill is None:
+            available = ", ".join(sorted(catalog)) or "（无）"
+            raise ToolError(f"未知技能：{name!r}；可用技能：{available}")
+        return skill.body
+
+    return Tool(
+        name="read_skill",
+        description=(
+            "按名字读取一份技能的正文（技能定义在根目录的 skills/<名字>/SKILL.md）。"
+            "未知名字会报错并列出现有技能。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "技能名"}},
+            "required": ["name"],
+        },
+        handler=handler,
+    )
+
+
 def default_registry(root: Path, ledger: IdempotencyLedger) -> ToolRegistry:
     """构造默认工具集。
 
     组成：只读（读文件 / 列目录 / 内容检索 / 文件名检索）+ 需审批的副作用（写文件 /
-    编辑文件 / 执行命令 / 付费桩）。
+    编辑文件 / 执行命令 / 付费桩）+ 只读的技能读取（``read_skill``，按需加载指令包）。
 
     工具集 MUST NOT 包含**代码求值**能力（``eval`` / ``exec``）——那是把整条权限边界
     绕过去的后门，任何情况下都不提供。写与执行能力存在，但 MUST NOT 绕过权限门。
@@ -552,6 +584,7 @@ def default_registry(root: Path, ledger: IdempotencyLedger) -> ToolRegistry:
     registry.register(list_dir_tool(root))
     registry.register(grep_tool(root))
     registry.register(find_tool(root))
+    registry.register(read_skill_tool(root))
     registry.register(write_file_tool(root))
     registry.register(edit_file_tool(root))
     registry.register(run_shell_tool(root))

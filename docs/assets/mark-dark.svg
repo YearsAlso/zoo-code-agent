@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" width="104" height="104" role="img" aria-label="zoo-code-agent">
+  <title>zoo-code-agent</title>
+  <!-- 深色变体：墨色换成 #E7EDF1，强调色不变。构造说明见 mark.svg。 -->
+  <circle cx="52" cy="52" r="40" fill="none" stroke="#E7EDF1" stroke-width="7"/>
+  <g stroke-linecap="round">
+    <rect x="30" y="33.5" width="36" height="8.5" rx="4.25" fill="#E7EDF1"/>
+    <rect x="30" y="48"   width="46" height="8.5" rx="4.25" fill="#33aa99"/>
+    <rect x="30" y="62.5" width="26" height="8.5" rx="4.25" fill="#E7EDF1"/>
+  </g>
+</svg>

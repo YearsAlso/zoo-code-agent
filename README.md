@@ -1,21 +1,47 @@
-# zoo-code-agent
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg"/>
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo.svg"/>
+  <img src="docs/assets/logo.png" alt="zoo-code-agent" width="300"/>
+</picture>
+
+**zoo-code-agent** — a coding agent you run yourself, on your own repository. It reads your files,
+edits them and runs your tests, with a permission gate in front of every write.
+
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](pyproject.toml)
+[![CI](https://github.com/YearsAlso/zoo-code-agent/workflows/CI/badge.svg)](https://github.com/YearsAlso/zoo-code-agent/actions/workflows/ci.yml)
+[![Roadmap](https://img.shields.io/badge/roadmap-Now%20%2F%20Next%20%2F%20Later-informational)](ROADMAP.md)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
 [**English**](README.md) | [中文](README.zh.md)
 
-A minimal coding agent built on [zoo-framework](https://github.com/YearsAlso/zoo-framework) — a
-mini-claude-code.
+</div>
+
+---
 
 ## What this is
 
+**Small is the design, not the maturity.** Everything this agent does is pinned by a spec under
+[`openspec/specs/`](openspec/specs/) and covered by tests (108 cases); a
+[task-level benchmark](#task-level-benchmark-what-it-can-do-in-numbers) reports what it can and
+cannot do — **including the runs where it fails**. Keeping it small is what lets you read the whole
+thing before you point it at your repository.
+
+- **A real agent, not a sketch.** It reads files, edits them and runs your tests; a session survives a
+  process restart; and the exit code says why it stopped (`0` finished / `2` budget exhausted /
+  `3` deadline / `4` timeout / `5` error).
+- **Writes are gated by default.** With no pre-authorization the agent is read-only: every write or
+  exec call is refused unless you grant it (`--allow`, an approver callback, or `--approve-all` in a
+  trusted environment).
 - **The layout is a standard scaffold project.** `src/` is the project root, `src/main.py` is the
   entry point, and `src/{workers,conf,params,events}/` are the framework's four extension points —
   `zfc --worker` works inside this repository as-is.
 - **It is not part of the framework.** It only depends on the released `zoo-framework`
   (`>=0.12,<0.13` from PyPI) and does not modify it.
-- **Two purposes:**
-  1. **Demonstration** — how to build a basic agent on the framework.
-  2. **Validation** — the first real consumer of the framework's "Agent" track
-     (zoo-framework issue #32), turning paper requirements into falsifiable findings.
+- **It also validates the framework** — it is the first real consumer of the framework's agent story
+  (issue #32), and the gaps it found are filed as framework issues (see
+  [Four findings](#four-findings-from-actually-running-it-and-where-they-landed)).
 
 ## Layout
 
@@ -258,7 +284,8 @@ cases that need to **simulate a process restart** should use `reset_process_stat
 (which keeps the file) instead of `reset_all()`.
 
 Missing any of these produces real false positives — the failure mode zoo-framework's
-`.claude/rules/assertion-integrity.md` warns about.
+[`assertion-integrity.md`](https://github.com/YearsAlso/zoo-framework/blob/dev/.claude/rules/assertion-integrity.md)
+rule warns about (that file lives in the framework repository, not in this one).
 
 ## Status
 
@@ -285,5 +312,6 @@ authoritative behaviour specs.
 
 ## Relationship to the framework repository
 
-This repository is mounted as a git submodule at `example/agent` of zoo-framework. After cloning the
-framework you need `git submodule update --init` to see it.
+This repository stands on its own — clone it and run it. It is also vendored into zoo-framework as
+the git submodule `example/agent`, where it doubles as the framework's reference consumer; after
+cloning the framework, `git submodule update --init` fetches it.

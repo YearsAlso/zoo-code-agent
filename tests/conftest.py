@@ -1,7 +1,8 @@
 """测试夹具：每个用例前后复位框架容器与运行期。
 
 不复位会让前一个用例的账本、会话与事件反应器注册残留下来，使后续断言在错误实现下
-依旧通过——这正是 ``.claude/rules/assertion-integrity.md`` 点名的失效模式。
+依旧通过——这正是 zoo-framework 的 ``.claude/rules/assertion-integrity.md`` 规则点名的失效模式
+（该文件在框架仓库里，不在本仓库）。
 """
 
 from __future__ import annotations

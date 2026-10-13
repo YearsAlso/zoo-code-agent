@@ -79,7 +79,7 @@
 
 | 不做 | 原因 |
 |---|---|
-| 做成通用 agent 框架 | 那是 zoo-framework 的领域；本仓库只做"一个最小的 coding agent 消费者"。 |
+| 做成通用 agent 框架 | 那是 zoo-framework 的领域；本仓库只做「一个够小、能读完的 coding agent」。 |
 | 多模态 / 图像输入 | 与"最小"冲突，且当前工具面全是文本。 |
 | 自带 Web UI | 终端与 CLI 够用；UI 是另一条产品线。 |
 

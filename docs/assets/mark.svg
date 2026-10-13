@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" width="104" height="104" role="img" aria-label="zoo-code-agent">
+  <title>zoo-code-agent</title>
+  <!-- mark 单独使用（头像 / 缩略图 / 别处引用）。构造与 zoo-framework 的 mark 相同，
+       说明见同目录 logo.svg。目标显示尺寸 < 40px 时不要用这个细描边环——
+       框架的品牌规范给了实底方块变体（favicon.svg）作为小尺寸方案。 -->
+  <circle cx="52" cy="52" r="40" fill="none" stroke="#223344" stroke-width="7"/>
+  <g stroke-linecap="round">
+    <rect x="30" y="33.5" width="36" height="8.5" rx="4.25" fill="#223344"/>
+    <rect x="30" y="48"   width="46" height="8.5" rx="4.25" fill="#33aa99"/>
+    <rect x="30" y="62.5" width="26" height="8.5" rx="4.25" fill="#223344"/>
+  </g>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 186" width="300" height="186" role="img" aria-label="zoo-code-agent">
+  <title>zoo-code-agent</title>
+  <!-- 标识沿用 zoo-framework 的构造（依据：其 docs/contributing/brand.md）：
+       环        = 生命周期 / 容器作用域（对应 Master 与 ScopedContainer）
+       三条横条  = 同一调度器下负载不同的任务，左端对齐、右端参差 —— 一条队列在排空
+       中间那条  = 当前被观测 / 正在推进的任务（强调色）
+       本仓库是框架的官方 demo，因此**刻意沿用同一个 mark**，只换 wordmark：这条队列正是
+       coding agent 要排空的东西（一轮一次工具调用）。
+       mark 的构造不得在此单独改动——要改就和 zoo-framework 的品牌规范一起改。 -->
+  <g transform="translate(98,10)">
+    <circle cx="52" cy="52" r="40" fill="none" stroke="#223344" stroke-width="7"/>
+    <g stroke-linecap="round">
+      <rect x="30" y="33.5" width="36" height="8.5" rx="4.25" fill="#223344"/>
+      <rect x="30" y="48"   width="46" height="8.5" rx="4.25" fill="#33aa99"/>
+      <rect x="30" y="62.5" width="26" height="8.5" rx="4.25" fill="#223344"/>
+    </g>
+  </g>
+  <text x="150" y="158" text-anchor="middle" font-size="28" font-weight="600" letter-spacing="-0.8"
+        fill="#223344"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">zoo code agent</text>
+</svg>

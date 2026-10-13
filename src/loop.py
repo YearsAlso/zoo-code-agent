@@ -18,6 +18,7 @@ from zoo_framework.reactor.event_retry_strategy import EventRetryStrategy
 from zoo_framework.workers.base_worker import BaseWorker
 
 from context import compact_view, estimate_tokens
+from hooks import decide_pre_tool, notify_on_stop, notify_post_tool
 from model import Message, ToolCall
 from runtime import AgentRuntime, SessionState
 from session import SessionStore
@@ -109,7 +110,7 @@ def run_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
 
     reason = termination_reason(runtime, session_id)
     if reason is not None:
-        store.set("stop_reason", reason)
+        _stop(runtime, session_id, reason)
         return {"action": "stop", "stop_reason": reason}
 
     pending: list[dict[str, Any]] = list(store.get("pending", []))
@@ -171,8 +172,31 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
         )
         return {"action": "model", "tool_calls": len(response.tool_calls), "turn": turn}
 
-    store.set("stop_reason", STOP_MODEL)
+    _stop(runtime, session_id, STOP_MODEL)
     return {"action": "model", "tool_calls": 0, "turn": turn, "stop_reason": STOP_MODEL}
+
+
+def _stop(runtime: AgentRuntime, session_id: str, reason: str) -> None:
+    """记录终止原因，并**只触发一次** ``on_stop`` 钩子。
+
+    触发点放在"首次把 ``stop_reason`` 写成非空"这里——``run_turn`` 顶部一旦看到非空的
+    ``stop_reason`` 就直接返回，故同一次终止不会重复触发。
+    """
+    state = runtime.session(session_id)
+    already_stopped = bool(state.store.get("stop_reason"))
+    state.store.set("stop_reason", reason)
+    if already_stopped:
+        return
+    notify_on_stop(state.hooks, reason, _stop_summary(state))
+
+
+def _stop_summary(state: SessionState) -> dict[str, Any]:
+    """会话终止摘要——与 ``drive_session`` 返回的字段同构，供 ``on_stop`` 观察。"""
+    return {
+        "stop_reason": state.store.get("stop_reason"),
+        "records": len(state.store.records()),
+        "tokens_spent": state.store.get("tokens_spent", 0),
+    }
 
 
 def _dispatch_tool_calls(
@@ -240,15 +264,23 @@ def on_tool_call(request: Any) -> None:
     verdict = state.policy.assess(
         tool.name, payload["arguments"], requires_approval=tool.requires_approval
     )
-    if verdict.allowed:
-        try:
-            result = tool.handler(payload["arguments"])
-        except ToolError as exc:
-            result = f"工具失败：{exc}"
-    else:
+    if not verdict.allowed:
         # 拒绝不是异常：写成一条观察回灌给模型，让它换一条路；会话不因此崩掉。
         # 同时它也是可断言的事实——"没被执行"和"执行后返回空"必须能区分开。
         result = f"工具被拒绝（{verdict.reason}）：{tool.name}"
+    else:
+        # 权限门已放行，才轮到 pre_tool 管"怎么做"——它不能把上面的拒绝翻回来。
+        decision = decide_pre_tool(state.hooks, tool.name, payload["arguments"])
+        if not decision.allow:
+            result = f"工具被拒绝（pre_tool：{decision.reason}）：{tool.name}"
+        else:
+            arguments = payload["arguments"] if decision.arguments is None else decision.arguments
+            try:
+                result = tool.handler(dict(arguments))
+            except ToolError as exc:
+                result = f"工具失败：{exc}"
+            # post_tool 只在执行体真的被进入后通知；被拒绝的调用不触发。
+            notify_post_tool(state.hooks, tool.name, arguments, result)
 
     state.store.append(
         role="tool",

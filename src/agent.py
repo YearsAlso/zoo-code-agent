@@ -14,6 +14,7 @@ from typing import Any
 
 from zoo_framework.core import Master
 
+from hooks import Hooks
 from loop import make_agent_worker, register_tool_reactor, start_session
 from model import ModelClient
 from permissions import PermissionPolicy
@@ -85,6 +86,7 @@ def build_master(
     budget: int = DEFAULT_BUDGET,
     timeout_seconds: float | None = None,
     policy: PermissionPolicy | None = None,
+    hooks: Hooks | None = None,
 ) -> Master:
     """装配一个可运行的 ``Master``。
 
@@ -97,6 +99,8 @@ def build_master(
         timeout_seconds: 截止期（相对秒数）；``None`` 表示不设。
         policy: 工具准入策略。``None`` 表示使用运行期默认值——**拒绝一切需要审批的操作**，
             即只读模式。要让 agent 真正改代码或跑命令，必须显式给出预授权名单或审批者。
+        hooks: 生命周期钩子（``pre_tool`` / ``post_tool`` / ``on_stop``）。``None`` 表示
+            不挂钩子；不挂时行为与基线逐字节一致。
 
     Returns:
         已注册 Agent 循环 Worker 的 ``Master``（尚未 run）。
@@ -106,7 +110,9 @@ def build_master(
 
     runtime = AgentRuntime()
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
-    runtime.configure(model=model, root=root, budget=budget, deadline=deadline, policy=policy)
+    runtime.configure(
+        model=model, root=root, budget=budget, deadline=deadline, policy=policy, hooks=hooks
+    )
     register_tool_reactor()
     start_session(runtime, session_id, prompt)
 

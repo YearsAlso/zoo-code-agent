@@ -153,6 +153,34 @@ Four capabilities — `agent-loop` / `model-client` / `tool-invocation` / `sessi
   when the history passes a threshold the middle is folded into **one summary observation** (the
   goal, the files touched, the commands run) while **the persisted record stays intact**; the budget
   counts estimated input plus reported output.
+- **Hooks**: three lifecycle extension points — `pre_tool` (deny, or **rewrite arguments**),
+  `post_tool` (observe the result), `on_stop` (session teardown). Off by default.
+
+## Extending it: lifecycle hooks
+
+The permission gate answers *whether* a call may run; a `pre_tool` hook answers *how*. The gate runs
+first, so a hook can never overturn its refusal. `post_tool` / `on_stop` are observe-only.
+
+```python
+from hooks import Hooks, PreToolDecision
+
+def block_migrations(name, arguments):
+    if str(arguments.get("path", "")).startswith("migrations/"):
+        return PreToolDecision(allow=False, reason="migrations/ is out of scope")
+    return PreToolDecision()                       # or PreToolDecision(arguments={...}) to rewrite
+
+seen = []
+hooks = Hooks(
+    pre_tool=block_migrations,                     # one callback each — no multicast / priority / async
+    post_tool=lambda name, args, result: seen.append((name, result)),
+    on_stop=lambda reason, summary: print("stopped:", reason),
+)
+master = build_master(model=client, session_id="s", prompt="...", root=".", hooks=hooks)
+```
+
+A hook raising is **failure-closed**: `pre_tool`'s exception denies the call and the reason carries
+it; `post_tool` / `on_stop` exceptions are swallowed, because by then the result and the stop reason
+are already committed.
 
 ## Task-level benchmark: what it can do, in numbers
 

@@ -137,6 +137,33 @@ python src/main.py --eval                                          # 任务级�
 - **上下文**：系统提示分层（基础行为 → 项目指令 → 可用工具），工作目录里的 `AGENTS.md` /
   `CLAUDE.md` 会自动注入；历史超限时把中间那段折叠成**一条摘要观察**（保留了目标、改过的文件、
   跑过的命令），**存档不动**；预算按「输入估算 + 输出实报」计。
+- **钩子**：三个生命周期扩展点——`pre_tool`（拒绝，或**改写参数**）、`post_tool`（观察结果）、
+  `on_stop`（会话收尾）。默认不挂。
+
+## 扩展：生命周期钩子
+
+权限门管**能不能做**，`pre_tool` 管**怎么做**；权限门先跑，所以钩子翻不回它的拒绝。
+`post_tool` / `on_stop` 只观察。
+
+```python
+from hooks import Hooks, PreToolDecision
+
+def block_migrations(name, arguments):
+    if str(arguments.get("path", "")).startswith("migrations/"):
+        return PreToolDecision(allow=False, reason="migrations/ 不在本次改动范围内")
+    return PreToolDecision()                       # 或 PreToolDecision(arguments={...}) 改写参数
+
+seen = []
+hooks = Hooks(
+    pre_tool=block_migrations,                     # 每类只挂一个：不做多播 / 优先级 / 异步
+    post_tool=lambda name, args, result: seen.append((name, result)),
+    on_stop=lambda reason, summary: print("stopped:", reason),
+)
+master = build_master(model=client, session_id="s", prompt="...", root=".", hooks=hooks)
+```
+
+钩子抛异常按**失败关闭**：`pre_tool` 抛错拒绝该调用，理由里带着它；`post_tool` / `on_stop`
+抛错被吞下——那时工具结果与终止原因**已经定下**，观察者出错不该把已定的事实翻掉。
 
 ## 任务级基准：它能干什么，用数字说话
 

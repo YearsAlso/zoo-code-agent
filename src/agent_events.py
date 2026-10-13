@@ -27,24 +27,46 @@ EVENT_TOPIC = "agent.event"
 STOP_TOPIC = "agent.stop"
 """终止主题：会话走到终止条件，携带终止原因与摘要。"""
 
+APPROVAL_TOPIC = "agent.approval.requested"
+"""审批请求主题：一条待批调用挂起时发布，由外部（终端 / 脚本 / 插件）接手。"""
+
+DECISION_TOPIC = "agent.approval.decided"
+"""审批决定主题：外部把决定发布回来，循环据此执行或拒绝。"""
+
 RELAY_NAME = "AgentEventRelay"
 """中继反应器名。按名字判断是否已挂，避免容器复位后重复注册。"""
+
+_UNSET: Any = object()
 
 _listeners: dict[str, Callable[[dict[str, Any]], None] | None] = {
     EVENT_TOPIC: None,
     STOP_TOPIC: None,
+    APPROVAL_TOPIC: None,
+    DECISION_TOPIC: None,
 }
 """当前订阅者。随每一轮驱动替换——不必反复注册反应器（重复注册会让同一事件投递多次）。"""
 
 
 def subscribe(
     *,
-    on_event: Callable[[dict[str, Any]], None] | None = None,
-    on_stop: Callable[[dict[str, Any]], None] | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = _UNSET,
+    on_stop: Callable[[dict[str, Any]], None] | None = _UNSET,
+    on_approval: Callable[[dict[str, Any]], None] | None = _UNSET,
+    on_decision: Callable[[dict[str, Any]], None] | None = _UNSET,
 ) -> None:
-    """登记当前消费者；不传即解绑（发布变成空操作）。"""
-    _listeners[EVENT_TOPIC] = on_event
-    _listeners[STOP_TOPIC] = on_stop
+    """登记消费者：**只改显式传入的那几路**，传 ``None`` 即解绑该路。
+
+    刻意不做"没传就清空"：审批的订阅者（命令行）与事件流的订阅者（驱动循环）是两拨人，
+    各自订阅自己的那一路，不该互相清掉。
+    """
+    for topic, listener in (
+        (EVENT_TOPIC, on_event),
+        (STOP_TOPIC, on_stop),
+        (APPROVAL_TOPIC, on_approval),
+        (DECISION_TOPIC, on_decision),
+    ):
+        if listener is not _UNSET:
+            _listeners[topic] = listener
 
 
 def publish(topic: str, payload: dict[str, Any]) -> None:

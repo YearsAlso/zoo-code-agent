@@ -17,7 +17,12 @@ from zoo_framework.core import Master
 
 import agent_events
 from hooks import Hooks
-from loop import make_agent_worker, register_tool_reactor, start_session
+from loop import (
+    make_agent_worker,
+    register_approval_reactor,
+    register_tool_reactor,
+    start_session,
+)
 from model import ModelClient
 from permissions import PermissionPolicy
 from runtime import AgentRuntime
@@ -117,6 +122,7 @@ def build_master(
         model=model, root=root, budget=budget, deadline=deadline, policy=policy, hooks=hooks
     )
     register_tool_reactor()
+    register_approval_reactor()
     if prompt is not None:
         start_session(runtime, session_id, prompt)
 
@@ -188,7 +194,8 @@ def drive_session(
         # 优雅停机既是框架的卖点，也是落盘的确定性来源：shutdown() 会 unregister
         # 全部 Worker，StateMachineWorker 的 destroy 钩子在此写出最后一版状态。
         # 没有这一步，「重启续跑」只能靠下一次调度轮次的碰运气式保存。
-        agent_events.subscribe()  # 解绑本轮消费者：下一轮（REPL）重新登记
+        # 解绑本轮消费者（只动这两路）：审批那一路归命令行自己管，别顺手清掉。
+        agent_events.subscribe(on_event=None, on_stop=None)
         if shutdown:
             master.shutdown()
 

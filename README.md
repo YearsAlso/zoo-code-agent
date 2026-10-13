@@ -280,6 +280,8 @@ authoritative behaviour specs.
 - Tests: **108 cases** green, `ruff` clean; `openspec list` shows no active change and all 11
   baseline specs pass `--strict`.
 - Base: `zoo-framework>=0.12,<0.13`, `requires-python>=3.11`.
+- What's next: [ROADMAP.md](ROADMAP.md) (中文) — Now / Next / Later, each with a verifiable
+  completion criterion.
 
 ## Relationship to the framework repository
 

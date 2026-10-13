@@ -20,14 +20,17 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import signal
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from agent import build_master, drive_session
-from loop import continue_session
+from loop import STOP_CANCELLED, continue_session
 from model import ModelClient, ScriptedClient
 from permissions import PermissionPolicy, PermissionRequest
 from runtime import AgentRuntime, reset_all
@@ -37,11 +40,13 @@ EXIT_BUDGET = 2
 EXIT_DEADLINE = 3
 EXIT_TIMEOUT = 4
 EXIT_ERROR = 5
+EXIT_CANCELLED = 6
 
 STOP_TO_EXIT = {
     "model_stopped": EXIT_OK,
     "budget_exhausted": EXIT_BUDGET,
     "deadline_reached": EXIT_DEADLINE,
+    "cancelled": EXIT_CANCELLED,
 }
 """终止原因 → 退出码。未列出的原因按错误处理，避免"不认识就当作成功"。"""
 
@@ -223,6 +228,28 @@ def _exit_code(summary: dict[str, Any]) -> int:
     return STOP_TO_EXIT.get(str(summary.get("stop_reason")), EXIT_ERROR)
 
 
+@contextlib.contextmanager
+def _cancel_on_interrupt(session_id: str):
+    """把 Ctrl-C 变成"请求停止"：当前这一步跑完后记 ``cancelled`` 退出，而不是抛栈。
+
+    只装得上的时候装——``signal.signal`` 在非主线程会抛 ``ValueError``，那不是错误，
+    直接跳过即可（库调用方可以自己调 ``AgentRuntime().request_cancel``）。
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.getsignal(signal.SIGINT)
+
+    def handler(_signum, _frame):
+        AgentRuntime().request_cancel(session_id)
+
+    signal.signal(signal.SIGINT, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def run_once(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
     """单次执行（在终端里运行时，写 / 执行会逐次询问）。"""
     reset_all()
@@ -236,14 +263,15 @@ def run_once(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
         policy=build_policy(args, stdin=stdin, out=out),
     )
     try:
-        summary = _drive(
-            master,
-            args.session,
-            timeout=args.timeout,
-            json_mode=args.json,
-            out=out,
-            shutdown=True,
-        )
+        with _cancel_on_interrupt(args.session):
+            summary = _drive(
+                master,
+                args.session,
+                timeout=args.timeout,
+                json_mode=args.json,
+                out=out,
+                shutdown=True,
+            )
     except TimeoutError:
         return EXIT_TIMEOUT
     except Exception as exc:  # 顶层入口：异常变成退出码，而不是抛栈给使用者
@@ -294,14 +322,18 @@ def repl(args: argparse.Namespace, *, out: TextIO, stdin: TextIO) -> int:
                 first = False
             else:
                 continue_session(runtime, args.session, prompt)
-            _drive(
-                master,
-                args.session,
-                timeout=args.timeout,
-                json_mode=args.json,
-                out=out,
-                shutdown=False,
-            )
+            with _cancel_on_interrupt(args.session):
+                summary = _drive(
+                    master,
+                    args.session,
+                    timeout=args.timeout,
+                    json_mode=args.json,
+                    out=out,
+                    shutdown=False,
+                )
+            if summary.get("stop_reason") == STOP_CANCELLED:
+                # 用户按了 Ctrl-C：别把下一轮也跑成"立刻取消"，直接收工。
+                break
         except TimeoutError:
             if master is not None:
                 master.shutdown()

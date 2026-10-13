@@ -157,6 +157,9 @@ Four capabilities — `agent-loop` / `model-client` / `tool-invocation` / `sessi
   `post_tool` (observe the result), `on_stop` (session teardown). Off by default.
 - **Skills**: progressive-disclosure instruction packs under `skills/<name>/SKILL.md`; the prompt
   lists only the name and one line, and `read_skill(name)` loads the body on demand.
+- **Events, phase, cancel**: the loop publishes `model_response` / `tool_result` on a topic and one
+  stop event on another, so consumers subscribe instead of polling. The session records an explicit
+  `phase`, and Ctrl-C becomes a cooperative cancel (exit code `6`).
 
 ## Extending it: lifecycle hooks
 
@@ -213,6 +216,26 @@ an empty body.
 
 The description line's fallbacks: omit the frontmatter and the name defaults to the folder name,
 the description to the first non-empty line of the body.
+
+## Events, phase, and cancelling
+
+A run is observable by **subscribing**, not by polling. The loop publishes `model_response` /
+`tool_result` on an event topic and one stop event on a stop topic; `drive_session` subscribes, and
+the CLI and the benchmark just render what arrives. Delivery is synchronous and ordered — the
+channel FIFO (used for tool *work*) hands reactors to a thread pool and does not preserve order, so
+events take the ordered dispatch path. In short: the queue dispatches work, topics carry
+notifications.
+
+The session also carries an explicit `phase` (`thinking` / `tools_pending` / `stopped`), so "what is
+it doing right now" is answerable from state instead of by reading the record log.
+
+Ctrl-C becomes a **cooperative cancel**: it sets a state flag, the loop stops at the next boundary,
+and the process exits with code `6`. It does **not** interrupt a tool call already in flight —
+CPython cannot safely kill a thread, so the agent does not pretend to. Library users open the same
+door with `AgentRuntime().request_cancel(session_id)`.
+
+Same-round tool calls now run **one at a time**, in the order the model gave them: the framework
+would happily execute them concurrently, so serialising them is the loop's own contract.
 
 ## Task-level benchmark: what it can do, in numbers
 

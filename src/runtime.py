@@ -115,6 +115,15 @@ class AgentRuntime:
             state.hooks = self.hooks
         return state
 
+    def request_cancel(self, session_id: str) -> None:
+        """请求在**下一个安全边界**停止该会话。
+
+        写一个状态位，循环在下一轮开头读到它就把终止原因记为 ``cancelled``。**不**假装
+        能中断正在执行的工具调用——CPython 无法安全中断线程，框架自己也只做"观察 + 熔断"。
+        因此语义是"不再往下走"：**尚未派发**的调用被跳过，**已经派发**的调用会照常跑完。
+        """
+        self.session(session_id).store.set("cancel_requested", True)
+
     def reset(self) -> None:
         """清空运行期状态。
 

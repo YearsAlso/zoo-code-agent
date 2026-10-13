@@ -44,6 +44,21 @@ def _tool_call(call_id: str, name: str = "read_file", arguments: Any = None) -> 
     return ToolCall(call_id=call_id, name=name, arguments=arguments or {"path": "notes.txt"})
 
 
+def _complete(session_id: str, call_id: str) -> None:
+    """把一次调用标记为"完成"：走真实反应器，写下观察并置 done。"""
+    on_tool_call(
+        _Request(
+            {
+                "session_id": session_id,
+                "call_id": call_id,
+                "name": "read_file",
+                "arguments": {"path": "notes.txt"},
+                "turn": 1,
+            }
+        )
+    )
+
+
 def test_model_turn_without_tool_calls_stops() -> None:
     runtime = _configure([ModelResponse(text="done")])
     start_session(runtime, "s", "hi")
@@ -92,21 +107,31 @@ def test_records_carry_turn_numbers_and_roles() -> None:
     assert [record["role"] for record in records] == ["user", "assistant"]
 
 
-def test_tool_calls_are_pushed_in_the_order_the_model_gave_them(sandbox) -> None:
+def test_same_round_tool_calls_go_out_one_at_a_time_in_model_order(sandbox) -> None:
+    """同轮的多个调用**串行**：一次只派一个，前一个没完成就不派下一个。
+
+    规格（``agent-loop``）要求串行且按模型给出的顺序，而事件通道把反应器交给线程池
+    并发执行——串行只能由循环自己守。这里断言的是"顺序 + 不并发"，不只是入队顺序。
+    """
     runtime = _configure(
         [ModelResponse(text="", tool_calls=(_tool_call("A"), _tool_call("B")))], root=sandbox
     )
     start_session(runtime, "s", "hi")
+    channel = EventChannelManager().get_channel(TOOL_CHANNEL)
 
     assert run_turn(runtime, "s")["tool_calls"] == 2
-    assert run_turn(runtime, "s") == {"action": "dispatch", "count": 2}
+    assert run_turn(runtime, "s") == {"action": "dispatch", "count": 1}
+    assert channel.size() == 1, "一次只派一个"
+    assert channel.pop_value().content["call_id"] == "A", "先派模型给出的第一个"
 
-    channel = EventChannelManager().get_channel(TOOL_CHANNEL)
-    pushed: list[str] = []
-    while (node := channel.pop_value()) is not None:
-        pushed.append(node.content["call_id"])
+    # A 尚未完成：B MUST NOT 被派发
+    assert run_turn(runtime, "s")["action"] == "await"
+    assert channel.size() == 0, "在飞期间 MUST NOT 派下一个"
 
-    assert pushed == ["A", "B"]
+    # A 完成后才轮到 B
+    _complete("s", "A")
+    assert run_turn(runtime, "s") == {"action": "dispatch", "count": 1}
+    assert channel.pop_value().content["call_id"] == "B"
 
 
 def test_pending_calls_are_not_pushed_twice(sandbox) -> None:

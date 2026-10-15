@@ -8,6 +8,7 @@ import signal
 from pathlib import Path
 
 import cli
+import shell
 from runtime import AgentRuntime
 
 
@@ -114,7 +115,20 @@ def test_json_mode_emits_one_event_per_line(tmp_path, sandbox) -> None:
     lines = [line for line in out.getvalue().splitlines() if line.strip()]
     events = [json.loads(line) for line in lines]
     kinds = [event["type"] for event in events]
-    assert kinds == ["model_response", "tool_result", "model_response", "stop"]
+    # 阶段事件、正文增量、边界声明也都是事件流的一部分（前端靠它们显示状态、
+    # 边生成边看见、以及"这次到底有没有隔离"），故把"会话事件"与这几类分开断言。
+    chatter = {"phase_changed", "model_delta", "boundary"}
+    assert [kind for kind in kinds if kind not in chatter] == [
+        "model_response",
+        "tool_result",
+        "model_response",
+        "stop",
+    ]
+    assert "phase_changed" in kinds
+    assert "model_delta" in kinds, "走脚本化客户端时也应当有增量"
+    assert any(
+        "边界" in event.get("text", "") for event in events if event["type"] == "boundary"
+    ), "边界 MUST 说给使用者听"
     assert events[-1]["reason"] == "model_stopped"
 
 
@@ -251,6 +265,49 @@ def test_interactive_approval_asks_before_writing(tmp_path, sandbox) -> None:
     assert (sandbox / "x.txt").read_text(encoding="utf-8") == "ok"
 
 
+def test_interactive_approval_shows_the_diff_before_asking(tmp_path, sandbox) -> None:
+    """先给"改了什么"，再问要不要做——否则使用者只能对着整份内容按 y。"""
+    out = io.StringIO()
+
+    code = cli.main(
+        [
+            "-p",
+            "写文件",
+            "--script",
+            str(_script_file(tmp_path, WRITE_FILE_SCRIPT)),
+            "--root",
+            str(sandbox),
+        ],
+        out=out,
+        stdin=_FakeTTY("y\n"),
+    )
+
+    text = out.getvalue()
+
+    assert code == cli.EXIT_OK
+    assert "+++ b/x.txt" in text and "+ok" in text, f"预览里应能看到这次改动：\n{text}"
+    assert text.index("+++ b/x.txt") < text.index("允许执行？"), "预览 MUST 出现在提问之前"
+
+
+def test_approval_preview_does_not_write_before_the_answer(tmp_path, sandbox) -> None:
+    """拒绝时 MUST NOT 落盘——预览本身也不许留下痕迹。"""
+    code = cli.main(
+        [
+            "-p",
+            "写文件",
+            "--script",
+            str(_script_file(tmp_path, WRITE_FILE_SCRIPT)),
+            "--root",
+            str(sandbox),
+        ],
+        out=io.StringIO(),
+        stdin=_FakeTTY("\n"),
+    )
+
+    assert code == cli.EXIT_OK
+    assert not (sandbox / "x.txt").exists()
+
+
 def test_interactive_approval_refusal_leaves_no_trace(tmp_path, sandbox) -> None:
     """回答否（或直接回车）：不落盘，会话继续走。"""
     stdin = _FakeTTY("\n")
@@ -329,7 +386,7 @@ def test_preauthorized_tool_is_not_asked_again(tmp_path, sandbox) -> None:
 
 def test_sigint_is_turned_into_a_cancel_request() -> None:
     """Ctrl-C 不再抛栈：装一次处理器，把中断变成"请求停止"这个**状态**。"""
-    with cli._cancel_on_interrupt("sigint"):
+    with shell.cancel_on_interrupt("sigint"):
         handler = signal.getsignal(signal.SIGINT)
         handler(signal.SIGINT, None)  # 模拟用户按下 Ctrl-C
 

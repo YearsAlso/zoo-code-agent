@@ -8,12 +8,13 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
 import subprocess
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,18 @@ class MissingDescription(ToolError):
     """工具声明缺少描述。"""
 
 
+class NameConflict(ToolError):
+    """注册的工具与已注册的同名。拒绝而不是覆盖——静默覆盖会让"为什么跑的是另一个"变成考古。"""
+
+
+class UngatedSideEffect(ToolError):
+    """声明了副作用却不需要审批。拒绝注册——那等于在权限门上开后门。"""
+
+
+class UntrustedTools(ToolError):
+    """项目级工具声明存在但未被信任。"""
+
+
 class PathEscape(ToolError):
     """路径越出声明的根目录。"""
 
@@ -48,6 +61,11 @@ class Tool:
         requires_approval: 是否 MUST 经权限门审批后才执行。写与执行类工具一律为真；
             只读工具为假。默认值取假只是为了让只读工具少写一个参数——危险工具 MUST
             显式声明为真，这条由 ``test_default_registry_gates_write_and_exec`` 守住。
+        preview: 可选。按参数算出"这次改动长什么样"，供审批界面在做决定**之前**展示。
+            MUST NOT 产生任何副作用（不写盘、不建目录）——它是纯计算，不是"先执行一遍看看"。
+        idempotent: 重复执行一次是否**安全**。默认假（失败关闭）：没声明就不重试。
+            它保护的是**没用账本**的那些工具——``run_shell`` 再跑一遍可能是第二次部署，
+            ``edit_file`` 再跑一遍会变成另一种结果。用账本的工具另有账本兜底，两条各管一段。
     """
 
     name: str
@@ -56,6 +74,8 @@ class Tool:
     handler: Callable[[dict[str, Any]], str]
     side_effect: bool = False
     requires_approval: bool = False
+    preview: Callable[[dict[str, Any]], str | None] | None = None
+    idempotent: bool = False
 
 
 class ToolRegistry:
@@ -72,12 +92,18 @@ class ToolRegistry:
 
         Raises:
             MissingDescription: 描述为空——空描述会让模型无从选择该工具。
-            ToolError: 同名工具已注册。
+            UngatedSideEffect: 声明了副作用却不需要审批——那样等于权限门上有一条没人管的通路。
+            NameConflict: 同名工具已注册。
         """
         if not tool.description.strip():
             raise MissingDescription(f"工具 {tool.name!r} 缺少描述，拒绝注册")
+        if tool.side_effect and not tool.requires_approval:
+            raise UngatedSideEffect(
+                f"工具 {tool.name!r} 声明了副作用却不需要审批——"
+                "有副作用就必须过权限门（requires_approval=True）"
+            )
         if tool.name in self._tools:
-            raise ToolError(f"工具 {tool.name!r} 已注册")
+            raise NameConflict(f"工具 {tool.name!r} 已注册——拒绝覆盖")
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool:
@@ -233,6 +259,7 @@ def read_file_tool(root: Path) -> Tool:
             "required": ["path"],
         },
         handler=handler,
+        idempotent=True,
     )
 
 
@@ -255,10 +282,36 @@ def list_dir_tool(root: Path) -> Tool:
             },
         },
         handler=handler,
+        idempotent=True,
     )
 
 
 MAX_TOOL_OUTPUT = 8000
+MAX_PREVIEW_CHARS = 4000
+"""审批预览的字符上限。预览是给人做决定用的，不是给人通读文件用的。"""
+
+
+def _elide(text: str, limit: int = MAX_PREVIEW_CHARS) -> str:
+    """超长时掐掉中间：开头是要看的地方，结尾要能看出文件收在哪。"""
+    if len(text) <= limit:
+        return text
+    head = text[: limit * 3 // 4]
+    tail = text[-limit // 4 :]
+    return f"{head}\n…（预览已截断，原文 {len(text)} 字符）\n{tail}"
+
+
+def _unified_diff(before: str, after: str, path: str) -> str:
+    """产出 ``a/<path>`` → ``b/<path>`` 的 unified diff 文本；无差异时返回空串。"""
+    lines = difflib.unified_diff(
+        before.splitlines(),
+        after.splitlines(),
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        lineterm="",
+    )
+    return _elide("\n".join(lines))
+
+
 """单个工具返回文本的上限（字符）。超出会截断并显式标注——静默丢内容会让模型以为看到的就是全部。"""
 
 SKIP_DIR_NAMES = frozenset(
@@ -325,6 +378,7 @@ def grep_tool(root: Path, max_results: int = 100) -> Tool:
             "required": ["pattern"],
         },
         handler=handler,
+        idempotent=True,
     )
 
 
@@ -364,11 +418,18 @@ def find_tool(root: Path, max_results: int = 200) -> Tool:
             "required": ["pattern"],
         },
         handler=handler,
+        idempotent=True,
     )
 
 
 def write_file_tool(root: Path) -> Tool:
     """构造需审批的「写文件」工具：创建或覆盖，父目录不存在时自动创建。"""
+
+    def preview(arguments: dict[str, Any]) -> str | None:
+        target = _resolve_in_root(root, str(arguments["path"]))
+        # 只看、不建：目标不存在时按"空内容"算，于是新增文件的预览全是 `+` 行。
+        before = target.read_text(encoding="utf-8") if target.is_file() else ""
+        return _unified_diff(before, str(arguments["content"]), str(arguments["path"]))
 
     def handler(arguments: dict[str, Any]) -> str:
         target = _resolve_in_root(root, str(arguments["path"]))
@@ -395,11 +456,27 @@ def write_file_tool(root: Path) -> Tool:
         handler=handler,
         side_effect=True,
         requires_approval=True,
+        preview=preview,
+        idempotent=True,
     )
 
 
 def edit_file_tool(root: Path) -> Tool:
     """构造需审批的「精确编辑」工具：默认要求匹配唯一，未匹配时报错而不是静默无操作。"""
+
+    def preview(arguments: dict[str, Any]) -> str | None:
+        target = _resolve_in_root(root, str(arguments["path"]))
+        old = str(arguments["old"])
+        if not target.is_file() or not old:
+            return None
+        original = target.read_text(encoding="utf-8")
+        if old not in original:
+            # 匹配不上（或匹配多次）时不给预览：错误由执行体报，预览不抢这件事。
+            return None
+        count = -1 if arguments.get("replace_all") else 1
+        return _unified_diff(
+            original, original.replace(old, str(arguments["new"]), count), str(arguments["path"])
+        )
 
     def handler(arguments: dict[str, Any]) -> str:
         target = _resolve_in_root(root, str(arguments["path"]))
@@ -444,16 +521,24 @@ def edit_file_tool(root: Path) -> Tool:
         handler=handler,
         side_effect=True,
         requires_approval=True,
+        preview=preview,
     )
 
 
-def run_shell_tool(root: Path, default_timeout: float = 60.0) -> Tool:
+def run_shell_tool(root: Path, default_timeout: float = 60.0, boundary: Any = None) -> Tool:
     """构造需审批的「执行命令」工具。
 
     用 ``shell=True`` 是刻意的：管道、``&&``、通配符是 coding agent 真正需要的能力，
     禁用它们只会让模型写出一串拼错的变体。**安全边界不在这里的字符串过滤，而在权限门与
     工作目录**——每次调用都要审批，``cwd`` 固定为声明的根目录。危险命令黑名单不是安全
     边界，本工具不假装它是。
+
+    Args:
+        root: 工作目录。
+        default_timeout: 默认超时（秒）。
+        boundary: 可选的有效边界（``sandbox.Boundary``）。给了就在其中执行：写只允许落在
+            工作目录与临时目录内。``None`` 表示没有边界——此时行为与引入沙箱之前一致，
+            且**不假装**有边界。
     """
 
     def handler(arguments: dict[str, Any]) -> str:
@@ -463,10 +548,11 @@ def run_shell_tool(root: Path, default_timeout: float = 60.0) -> Tool:
         timeout = float(arguments.get("timeout", default_timeout))
 
         try:
-            # shell=True 的取舍见本工具 docstring；安全边界是权限门，不是字符串过滤。
+            # 用 shell 执行是刻意的（管道 / && / 通配符），取舍见本工具 docstring；
+            # 安全边界是权限门 + 可选的沙箱，不是字符串过滤。
             completed = subprocess.run(
-                command,
-                shell=True,
+                _shell_argv(command, boundary),
+                shell=False,
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -483,7 +569,11 @@ def run_shell_tool(root: Path, default_timeout: float = 60.0) -> Tool:
         if completed.stdout.strip():
             parts.append("stdout:\n" + _truncate(completed.stdout))
         if completed.stderr.strip():
-            parts.append("stderr:\n" + _truncate(completed.stderr))
+            stderr = _truncate(completed.stderr)
+            if completed.returncode != 0 and boundary is not None and boundary.active:
+                # 说清"是边界拦的"：否则模型会去改命令的写法，而问题不在那儿。
+                stderr += f"\n（若这次失败与写文件有关：当前边界为 {boundary.describe()}）"
+            parts.append("stderr:\n" + stderr)
         return "\n".join(parts)
 
     return Tool(
@@ -503,6 +593,19 @@ def run_shell_tool(root: Path, default_timeout: float = 60.0) -> Tool:
         side_effect=True,
         requires_approval=True,
     )
+
+
+def _shell_argv(command: str, boundary: Any) -> list[str]:
+    """把命令包进边界（没有边界时就是 ``/bin/sh -c``）。
+
+    延迟导入 ``sandbox``：工具层不依赖边界那一层——它是可选的。
+    没有边界时也**显式**给出 ``/bin/sh -c``，好让"有没有边界"在代码里只有一条路径。
+    """
+    if boundary is None:
+        return ["/bin/sh", "-c", command]
+    from sandbox import wrap
+
+    return wrap(command, boundary)
 
 
 def paid_lookup_tool(ledger: IdempotencyLedger) -> Tool:
@@ -533,6 +636,7 @@ def paid_lookup_tool(ledger: IdempotencyLedger) -> Tool:
         handler=handler_with_ledger,
         side_effect=True,
         requires_approval=True,
+        idempotent=True,
     )
 
 
@@ -564,6 +668,7 @@ def read_skill_tool(root: Path) -> Tool:
             "required": ["name"],
         },
         handler=handler,
+        idempotent=True,
     )
 
 
@@ -579,6 +684,28 @@ def default_registry(root: Path, ledger: IdempotencyLedger) -> ToolRegistry:
     注册本身不构成放行：是否执行由 ``PermissionPolicy`` 在调用时判定，默认策略拒绝
     一切需要审批的操作。
     """
+    return build_registry(root, ledger)
+
+
+def build_registry(
+    root: Path,
+    ledger: IdempotencyLedger,
+    *,
+    extra: Iterable[Tool] = (),
+    boundary: Any = None,
+) -> ToolRegistry:
+    """构造工具集：内置 + 外部。
+
+    外部工具与内置工具进的是**同一个**注册表，于是它们自动共享同一条权限门、同一条审计路径、
+    同一份发给模型的声明。MUST NOT 存在绕过权限门的第二条通路——注册期的两条强制规则
+    （有副作用就必须需要审批、同名拒绝）就落在这里。
+
+    Args:
+        root: 只读工具与技能读取的根目录。
+        ledger: 幂等账本。
+        extra: 外部工具（插件 / 显式模块 / 项目级声明）。
+        boundary: 执行命令时的有效边界（``sandbox.Boundary``）；``None`` 表示没有边界。
+    """
     registry = ToolRegistry()
     registry.register(read_file_tool(root))
     registry.register(list_dir_tool(root))
@@ -587,6 +714,111 @@ def default_registry(root: Path, ledger: IdempotencyLedger) -> ToolRegistry:
     registry.register(read_skill_tool(root))
     registry.register(write_file_tool(root))
     registry.register(edit_file_tool(root))
-    registry.register(run_shell_tool(root))
+    registry.register(run_shell_tool(root, boundary=boundary))
     registry.register(paid_lookup_tool(ledger))
+    for tool in extra:
+        registry.register(tool)
     return registry
+
+
+PLUGIN_ENTRY_POINT_GROUP = "zoo_code_agent.tools"
+"""已安装插件声明工具的入口点组。
+
+**装了就信**：能被装进环境的东西本来就跑在本进程里，为它另造一套信任模型只是仪式。
+"""
+
+PROJECT_TOOLS_PATH = Path(".zoo") / "tools.py"
+"""项目级工具声明：工作目录下这个文件暴露 ``TOOLS``。
+
+它与插件不同——它是**别人仓库里的一个文件**，所以 MUST 显式信任才会加载。
+"""
+
+TOOLS_ATTRIBUTE = "TOOLS"
+"""外部来源暴露工具的属性名。"""
+
+
+def load_plugin_tools() -> tuple[Tool, ...]:
+    """收集已安装插件通过入口点声明的工具。"""
+    from importlib.metadata import entry_points
+
+    found: list[Tool] = []
+    for entry in entry_points(group=PLUGIN_ENTRY_POINT_GROUP):
+        found.extend(_tools_from(entry.load(), origin=f"插件 {entry.name!r}"))
+    return tuple(found)
+
+
+def load_module_tools(module_name: str) -> tuple[Tool, ...]:
+    """从**显式给出**的模块里取工具。
+
+    显式指定即视为使用者的信任表达——他把它敲进来了。
+    """
+    import importlib
+
+    return _tools_from(importlib.import_module(module_name), origin=f"模块 {module_name!r}")
+
+
+def load_project_tools(root: Path | str, *, trusted: bool) -> tuple[Tool, ...]:
+    """加载工作目录下的项目级工具声明。
+
+    Raises:
+        UntrustedTools: 声明存在但未被信任。**报错而不是跳过**：静默跳过会让使用者以为
+            它生效了，直到模型说"我没有这个工具"。
+    """
+    path = Path(root) / PROJECT_TOOLS_PATH
+    if not path.is_file():
+        return ()
+    if not trusted:
+        raise UntrustedTools(
+            f"{path} 存在，但项目级工具声明等于让这个文件在会话进程里执行代码，"
+            "MUST 显式信任：加 --trust-project-tools，或把它做成一个已安装的插件"
+        )
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("zca_project_tools", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - 文件存在却拿不到 loader
+        raise ToolError(f"无法加载 {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return _tools_from(module, origin=str(path))
+
+
+def _tools_from(provider: Any, *, origin: str) -> tuple[Tool, ...]:
+    """从一个来源取工具：它 MUST 暴露 ``TOOLS``。
+
+    接受 ``Tool`` 实例，也接受**无参可调用**（延迟构造：有些工具想在加载时才读环境）。
+    两种以外的形状一律拒绝——含糊的接口会让插件作者各写各的。
+    """
+    raw = getattr(provider, TOOLS_ATTRIBUTE, None)
+    if raw is None:
+        raise ToolError(f"{origin} 没有暴露 {TOOLS_ATTRIBUTE}（应当是一个 Tool 序列）")
+    tools: list[Tool] = []
+    for index, item in enumerate(raw):
+        tool = item() if callable(item) and not isinstance(item, Tool) else item
+        if not isinstance(tool, Tool):
+            raise ToolError(f"{origin} 的第 {index + 1} 项不是 Tool，也不是返回 Tool 的无参可调用")
+        tools.append(tool)
+    return tuple(tools)
+
+
+def collect_external_tools(
+    root: Path | str,
+    *,
+    modules: Iterable[str] = (),
+    plugins: bool = True,
+    project_tools: bool = False,
+) -> tuple[Tool, ...]:
+    """把三类外部来源汇成一份清单（装配层用）。
+
+    Args:
+        root: 工作目录（项目级声明在那里找）。
+        modules: 显式给出的模块名。
+        plugins: 是否加载已安装插件。
+        project_tools: 是否信任项目级声明。
+    """
+    found: list[Tool] = []
+    if plugins:
+        found.extend(load_plugin_tools())
+    for module_name in modules:
+        found.extend(load_module_tools(module_name))
+    found.extend(load_project_tools(root, trusted=project_tools))
+    return tuple(found)

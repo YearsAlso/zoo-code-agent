@@ -1,0 +1,101 @@
+name: Release
+
+# tag 驱动：推一个 `v*` 标签就把这一版发出去。版本号的唯一真源是 `pyproject.toml`——
+# 标签与它不一致时这里会**失败**，而不是发一个名不副实的版本。
+on:
+  push:
+    tags: ["v*"]
+  # 演练：手工触发，发到 TestPyPI，不碰正式包
+  workflow_dispatch:
+    inputs:
+      rehearsal:
+        description: "发到 TestPyPI 演练（不碰正式包）"
+        type: boolean
+        default: true
+
+jobs:
+  guard:
+    name: 版本号与标签一致
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        shell: bash
+        run: |
+          version=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # 演练跑（workflow_dispatch）时标签可能不存在，那就只做构建与安装检查
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$version" ]; then
+              echo "::error::标签 $GITHUB_REF_NAME 与 pyproject 的 $version 不一致——拒绝发布"
+              exit 1
+            fi
+          fi
+          echo "版本 $version"
+
+  test:
+    name: 先跑全量用例
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Test（不设任何模型密钥）
+        run: pytest
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check src tests
+          ruff format --check src tests
+
+  build:
+    name: 构建 sdist 与 wheel
+    needs: [guard, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      # 装上刚构建出来的 wheel 再跑一次 —— 打包漏文件、入口装不上这类问题只有这一步能抓到
+      - name: 安装 wheel 并冒烟
+        run: |
+          python -m venv /tmp/wheel-smoke
+          /tmp/wheel-smoke/bin/pip install dist/*.whl
+          /tmp/wheel-smoke/bin/zca --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: 发布（TestPyPI 演练 / PyPI 正式）
+    needs: build
+    runs-on: ubuntu-latest
+    # 正式发布用 **Trusted Publishing**（OIDC）：不留长期 token，
+    # 于是"仓库里没有可泄漏的发布凭据"这件事成立
+    permissions:
+      id-token: write
+    environment: release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: 发到 TestPyPI（演练）
+        if: github.event_name == 'workflow_dispatch' || contains(github.ref_name, '-rc')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: 发到 PyPI
+        if: github.event_name == 'push' && !contains(github.ref_name, '-rc')
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -54,3 +54,27 @@ jobs:
       - run: pip install ruff
       - run: ruff check src tests
       - run: ruff format --check src tests
+
+  extras:
+    # 装了可选 extras 之后的**同一批用例**必须照样全绿：渲染契约是 ops、全屏界面的契约是
+    # "状态归约 + 投影"、提供方路径的契约是"真 SDK + 本地假服务"——都不是某个具体库。
+    #
+    # **为什么要装 anthropic**：默认安装刻意不含提供方 SDK（上面那两个作业的"断言 SDK 缺席"
+    # 就是这条保证）。但这样一来"真 SDK 的 HTTP 路径"那组用例会在别处静默跳过——
+    # 于是这里装上它，让那些用例**真的跑一次**。
+    name: optional extras / py3.13
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install with the optional extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,tui,rich,anthropic]"
+      - name: Assert the optional extras really are present
+        run: |
+          python -c "import anthropic, rich, textual; print('OK: rich', rich.__version__, '/ textual', textual.__version__, '/ anthropic', anthropic.__version__)"
+      - name: Test
+        run: pytest

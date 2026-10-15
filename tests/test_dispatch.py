@@ -156,7 +156,10 @@ def test_one_failing_task_does_not_stop_the_batch(sandbox) -> None:
         _master(sandbox), tasks, model_for=model_for, concurrency=1, timeout=60
     )
 
-    assert "提供方不可达" in results[0]["error"], "失败 MUST 收敛成该任务的结果，而不是把整批拖死"
+    # 先断言"收敛成了这条任务的结果"，并把实际载荷印出来：这一条曾在本机全量运行中间歇性失败
+    # （6 次里 1 次），裸 KeyError 看不出到底收回了什么。原因未查明，见 CHANGE-NOTES 式的记录。
+    assert "error" in results[0], f"失败 MUST 收敛成该任务的结果，而不是把整批拖死：{results}"
+    assert "提供方不可达" in results[0]["error"]
     assert results[1]["stop_reason"] == "model_stopped", "其余任务照常跑完"
 
 

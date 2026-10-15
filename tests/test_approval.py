@@ -9,6 +9,7 @@ import agent_events
 from loop import (
     PHASE_APPROVAL,
     PHASE_TOOLS,
+    _preview_for,
     _requeue_unfinished,
     on_approval_decision,
     on_tool_call,
@@ -192,3 +193,38 @@ def test_deferred_call_is_requeued_so_a_resume_asks_again(sandbox) -> None:
     _requeue_unfinished(store)  # 续跑的第一步
 
     assert store.get("pending")[0]["dispatched"] is False, "重新派发 → 重新问一次"
+
+
+def test_deferred_approval_event_carries_the_preview(sandbox) -> None:
+    """挂起那条路上，预览 MUST 跟着事件一起发出去——终端正是靠它显示 diff。"""
+    runtime = _session(sandbox, defer=True)
+    received: list[dict] = []
+    agent_events.subscribe(on_approval=received.append)
+    agent_events.bind()
+
+    _call(path="fresh.txt")
+
+    assert received, "先断言非空"
+    assert received[0]["preview"] is not None
+    assert "+ok" in received[0]["preview"]
+    assert not (sandbox / "fresh.txt").exists(), "挂起阶段 MUST NOT 落盘"
+    assert runtime.session(SESSION).store.get("phase") == PHASE_APPROVAL
+
+
+def test_preview_failure_never_breaks_the_approval_flow() -> None:
+    """预览是提示，不是判定：工具没声明、或算的时候抛错，都只当"没有预览"。"""
+
+    class _NoPreview:
+        pass
+
+    class _Broken:
+        def preview(self, arguments: dict) -> str:
+            raise RuntimeError("boom")
+
+    class _Empty:
+        def preview(self, arguments: dict) -> str:
+            return ""
+
+    assert _preview_for(_NoPreview(), {}) is None
+    assert _preview_for(_Broken(), {}) is None
+    assert _preview_for(_Empty(), {}) is None, "空串等于没有预览，别在界面上留一片空白"

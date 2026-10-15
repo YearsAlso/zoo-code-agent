@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +84,17 @@ def _load_persisted_state() -> None:
         manager.load_state_machines()
 
 
+def restore_persisted_state() -> None:
+    """把落盘状态读回内存。
+
+    ``build_master`` 装配时会做这一步；但**读存档的命令**（``--show`` / ``--fork``）在装配之前
+    就要读会话，所以它们得自己先读一次。不读的话，``runtime.session(...)`` 会现场建一个**空**
+    作用域——于是"未知的条目地址"看上去像地址写错了，其实是存档根本没被读进来。
+    """
+    _ensure_persistence_dir()
+    _load_persisted_state()
+
+
 def build_master(
     *,
     model: ModelClient,
@@ -94,6 +105,9 @@ def build_master(
     timeout_seconds: float | None = None,
     policy: PermissionPolicy | None = None,
     hooks: Hooks | None = None,
+    worker_name: str | None = None,
+    tools: Sequence[Any] = (),
+    boundary: Any = None,
 ) -> Master:
     """装配一个可运行的 ``Master``。
 
@@ -109,6 +123,12 @@ def build_master(
             即只读模式。要让 agent 真正改代码或跑命令，必须显式给出预授权名单或审批者。
         hooks: 生命周期钩子（``pre_tool`` / ``post_tool`` / ``on_stop``）。``None`` 表示
             不挂钩子；不挂时行为与基线逐字节一致。
+        worker_name: 循环 Worker 的注册名，默认 ``AgentLoop``。**同一个进程里反复装配
+            不同会话时 MUST 传不同的名字**：框架的 ``WorkerRegistry`` 按**名字**缓存已实例化
+            的 Worker，同名会让第二次装配拿回第一次那个闭包（它绑着上一个会话），表现为
+            "新会话永远不推进"——本仓库 README 记的就是这个坑。
+        tools: 外部工具（插件 / 显式模块 / 项目级声明）。它们与内置工具进同一条权限门。
+        boundary: 执行命令时的有效边界（``sandbox.Boundary``）；``None`` 表示没有边界。
 
     Returns:
         已注册 Agent 循环 Worker 的 ``Master``（尚未 run）。
@@ -119,7 +139,14 @@ def build_master(
     runtime = AgentRuntime()
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
     runtime.configure(
-        model=model, root=root, budget=budget, deadline=deadline, policy=policy, hooks=hooks
+        model=model,
+        root=root,
+        budget=budget,
+        deadline=deadline,
+        policy=policy,
+        hooks=hooks,
+        extra_tools=tools,
+        boundary=boundary,
     )
     register_tool_reactor()
     register_approval_reactor()
@@ -129,7 +156,7 @@ def build_master(
     master = Master()
     if prompt is not None:
         # 不起会话就不挂长驻循环 Worker：批量派发由 ``dispatch`` 注册自己的 Worker。
-        master.register_worker("AgentLoop", make_agent_worker(session_id))
+        master.register_worker(worker_name or "AgentLoop", make_agent_worker(session_id))
     return master
 
 
@@ -181,7 +208,8 @@ def drive_session(
         finished.set()
 
     agent_events.bind()
-    agent_events.subscribe(on_event=on_event, on_stop=_on_stop)
+    # 阶段事件也交给同一个回调：前端要显示"在想 / 在跑工具"，而它唯一的来源就是这条流。
+    agent_events.subscribe(on_event=on_event, on_stop=_on_stop, on_phase=on_event)
     deadline = time.monotonic() + timeout
 
     try:
@@ -195,7 +223,7 @@ def drive_session(
         # 全部 Worker，StateMachineWorker 的 destroy 钩子在此写出最后一版状态。
         # 没有这一步，「重启续跑」只能靠下一次调度轮次的碰运气式保存。
         # 解绑本轮消费者（只动这两路）：审批那一路归命令行自己管，别顺手清掉。
-        agent_events.subscribe(on_event=None, on_stop=None)
+        agent_events.subscribe(on_event=None, on_stop=None, on_phase=None)
         if shutdown:
             master.shutdown()
 
@@ -220,7 +248,7 @@ def run() -> None:  # pragma: no cover - 需要真实进程与 Ctrl-C
     脚本化模型意味着它**不需要任何 API 密钥**即可运行——这条演示本身就是
     「无密钥可跑通」的证明。
     """
-    from .model import ModelResponse, ScriptedClient, ToolCall
+    from model import ModelResponse, ScriptedClient, ToolCall
 
     script = [
         ModelResponse(

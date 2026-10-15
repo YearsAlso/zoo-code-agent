@@ -5,7 +5,7 @@ from __future__ import annotations
 from agent import build_master, drive_session
 from loop import STOP_MODEL
 from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
+from permissions import MAX_SUMMARY_CHARS, PermissionPolicy, summarize_call
 from runtime import AgentRuntime
 from tools import IdempotencyLedger, default_registry
 
@@ -17,6 +17,44 @@ def test_read_tools_never_need_approval() -> None:
 
     assert verdict.allowed is True
     assert verdict.reason
+
+
+def test_summary_is_one_line_and_never_grows_with_the_payload() -> None:
+    """摘要 MUST 有上限：原样拼参数时，写一个 40 行文件就有 314 字符（实测），使用者反而看不到重点。"""
+    content = "x = 1\n" * 500
+
+    summary = summarize_call("write_file", {"path": "a.py", "content": content})
+
+    assert "\n" not in summary
+    assert len(summary) <= MAX_SUMMARY_CHARS + 40, "正文上限之外只允许加一小段截断标注"
+    assert "a.py" in summary, "截断也 MUST 留下「改哪个文件」这类做决定必需的信息"
+    assert f"共 {len(repr(content))} 字符" in summary, "截断要能看出原文多大"
+
+
+def test_summary_of_a_small_call_is_left_alone() -> None:
+    """短调用不加任何噪音——截断只在需要时发生。"""
+    assert summarize_call("run_shell", {"command": "pytest -q"}) == "run_shell(command='pytest -q')"
+
+
+def test_approver_receives_the_preview() -> None:
+    """预览 MUST 一路传到审批者手里，而不是停在工具层。"""
+    seen: dict[str, object] = {}
+
+    def approver(request) -> bool:
+        seen["summary"] = request.summary
+        seen["preview"] = request.preview
+        return True
+
+    verdict = PermissionPolicy(approver=approver).assess(
+        "write_file",
+        {"path": "a.txt", "content": "x"},
+        requires_approval=True,
+        preview="--- a/a.txt\n+++ b/a.txt\n+x",
+    )
+
+    assert verdict.allowed is True
+    assert seen["preview"] == "--- a/a.txt\n+++ b/a.txt\n+x"
+    assert "a.txt" in str(seen["summary"])
 
 
 def test_default_policy_denies_everything_that_needs_approval() -> None:

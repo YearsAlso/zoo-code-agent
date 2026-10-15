@@ -7,6 +7,8 @@ name = "zoo-code-agent"
 version = "0.0.1"
 description = "基于 zoo-framework 的最小 coding agent（标准脚手架布局）"
 license = {text = "Apache-2.0"}
+# PyPI 页面的正文：没有它，发布出去的页面是空的
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # 只消费已发布的框架版本，MUST NOT 跟随 dev 主干（见 openspec/changes/add-minimal-agent-loop/design.md D1）
@@ -26,12 +28,25 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
+[project.urls]
+Homepage = "https://github.com/YearsAlso/zoo-code-agent"
+Repository = "https://github.com/YearsAlso/zoo-code-agent"
+Issues = "https://github.com/YearsAlso/zoo-code-agent/issues"
+Changelog = "https://github.com/YearsAlso/zoo-code-agent/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 # 真实提供方走 extras：CI 与演示默认不需要任何 API 密钥
 anthropic = ["anthropic>=0.40"]
 # 基准（`zca --eval`）在沙箱里跑 pytest 验收；不装它时会给出明确提示而不是含糊的失败
 eval = ["pytest>=8"]
 dev = ["pytest>=8"]
+# 逐行外壳的**可选**增强：装了 rich 就有真彩与更清楚的 diff，没装则用自带的 ANSI 渲染器。
+# 刻意不做成必需依赖——"零依赖可跑通、可断言"这条保证比配色重要（见
+# openspec/changes/add-interactive-shell/design.md D2）。
+rich = ["rich>=13"]
+# 全屏界面（`zca --tui`）需要界面库；同样可选。界面层拆成了"状态归约（纯函数）+ 薄层"，
+# 所以不装它的时候，界面行为照样有用例覆盖（见 openspec/changes/add-fullscreen-tui/design.md）。
+tui = ["textual>=0.80"]
 
 [project.scripts]
 # 安装后的命令名；目标是 src/main.py——它按参数分流到会话 / 基准 / 调度器。

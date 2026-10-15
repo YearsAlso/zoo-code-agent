@@ -23,7 +23,7 @@ edits them and runs your tests, with a permission gate in front of every write.
 ## What this is
 
 **Small is the design, not the maturity.** Everything this agent does is pinned by a spec under
-[`openspec/specs/`](openspec/specs/) and covered by tests (108 cases); a
+[`openspec/specs/`](openspec/specs/) and covered by tests (460 cases); a
 [task-level benchmark](#task-level-benchmark-what-it-can-do-in-numbers) reports what it can and
 cannot do — **including the runs where it fails**. Keeping it small is what lets you read the whole
 thing before you point it at your repository.
@@ -63,10 +63,19 @@ src/
 
 ```bash
 pip install -e ".[dev]"     # no real model SDK included
-pytest                      # 108 cases, none of which need an API key
+uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # try it without cloning (0.0.1 today)
+pytest                      # 460 cases, none of which need an API key
 python src/main.py          # start the scheduler and run the example workers (Ctrl-C to stop)
 python src/main.py -p "list the current directory" --script examples/smoke.json --allow list_dir   # key-free session
 ```
+
+**Version and release.** `zca --version` prints the version, which has exactly one source: the installed
+distribution's metadata (`pyproject.toml` when run in place). `CHANGELOG.md` keeps the history; pushing a
+`v*` tag runs the release workflow, which refuses to publish unless the tag and the declared version
+agree, runs the whole suite first, and installs the wheel it just built before uploading it (that last
+step is what catches missing files and broken entry points). Publishing uses trusted publishing, so there
+is no long-lived token in the repository. The wheel builds and installs locally — the upload itself has
+not been exercised here, since that needs a tag push and the PyPI-side configuration.
 
 With a real model (needs `ANTHROPIC_API_KEY`):
 
@@ -104,6 +113,7 @@ uvx --from "zoo-code-agent[eval]@git+https://github.com/YearsAlso/zoo-code-agent
 
 python src/main.py                                                # scaffold default: start the scheduler and its workers
 python src/main.py -i                                             # interactive session (needs ANTHROPIC_API_KEY)
+python src/main.py -i --script examples/smoke.json --banner        # the same shell, no keys needed
 python src/main.py -p "make the tests pass" --allow write_file,edit_file,run_shell   # headless single run
 python src/main.py --json -p "make the tests pass" --allow run_shell     # one JSON event per line
 python src/main.py -p "list the current directory" --script examples/smoke.json --allow list_dir  # key-free demo
@@ -117,7 +127,9 @@ python src/main.py --eval                                          # task-level 
 exhausted / `3` deadline reached / `4` timeout / `5` error.
 
 **Read-only by default — and writes ask first.** In a terminal, every write or exec call stops for a
-y/N; the prompt shows the tool and its arguments. With no pre-authorization *and* no terminal (a
+y/N; the prompt shows the tool, and **a unified diff of what is about to change** (writes and exact
+edits both produce one) instead of asking you to bless a whole file. Summaries are length-capped, so
+a few-thousand-line file cannot flood the terminal. With no pre-authorization *and* no terminal (a
 pipe, CI, `--json`) the call is **refused** rather than queued — waiting for input that will never
 come is worse than failing. `--allow write_file,edit_file,run_shell` pre-authorizes, and
 `--approve-all` removes the gate entirely (trusted environments only).
@@ -126,12 +138,83 @@ That prompt is a **deferred decision**, not a blocking read: the call is parked 
 request goes out on a topic, and a decision comes back on another one. The event thread is never
 held hostage by a human — and "waiting for approval" is a real session phase you can query.
 
-**Streaming is step-level**, not token-level: each model response and tool result is printed as it
-happens, while `ModelClient.complete` still returns a whole response at once.
+**Transient model failures are retried; the rest are not.** A rate limit or a connection blip is
+retried with exponential backoff — 3 retries and a 1s base by default, `--retries` / `--retry-delay`
+to tune, `--retries 0` to see the first failure raw. An auth failure or a bad request fails
+immediately: retrying a deterministic failure only buys seven seconds of waiting and a few more
+doomed requests. Every retry prints one line saying why and for how long, because a silent seven
+second pause is indistinguishable from a hang. The SDK's own retry is switched off so this stays the
+single, observable source of truth. A **streaming** call stops retrying the moment it has emitted
+text — replaying it would show the same sentence twice, and that looks like success.
+
+**Point it at your own endpoint.** `--provider openai --base-url https://your-gateway/v1 --model ...`
+speaks the OpenAI-compatible `/chat/completions` protocol (vLLM, a gateway, a relay, the official
+API — same code path), with the key read from `OPENAI_API_KEY`. It is built on the standard library
+alone, so "the default install runs and can be asserted" still holds for it. Streaming and retries
+are the layers around it and apply automatically — adding this provider touched neither the loop nor
+the renderer nor the retry policy.
+
+**Bring your own tools.** Two ways in, both landing in the *same* registry as the built-ins, and so
+through the same permission gate: an installed package can declare tools via the
+`zoo_code_agent.tools` entry point (installed is trusted), or you pass `--tool-module my_tools` (the
+module exposes `TOOLS`). A declaration inside the working directory (`.zoo/tools.py`) is the third
+form and needs `--trust-project-tools` — it means running a file from that directory inside the
+session process, so silence would be the wrong default; without the flag it fails with a message
+saying what to do. Registration also enforces two rules: a tool that declares a side effect must
+require approval, and a name clash is refused rather than silently overridden.
+
+Tools now declare whether repeating them is **safe** (default: no). A tool that does not say so is
+never retried by the reactor; `run_shell` and `edit_file` say no (a second run means a second deploy,
+or a different outcome), while the read tools, `write_file` and the ledger-backed paid tool say yes.
+
+**Or attach an MCP server.** `--mcp 'python my_server.py'` (repeatable) speaks a minimal stdio MCP:
+handshake, list tools, call tools, one JSON message per line. Those tools land in the same registry as
+everything else, so they go through the same gate — and the permission mapping is **fail-closed**: only
+a tool the server explicitly marks read-only (`annotations.readOnlyHint`) skips approval; everything
+else counts as side-effecting, and `idempotentHint` decides whether a failure may be retried. Every
+request has a wall-clock limit, so a server that stops answering fails instead of hanging the session,
+and the processes this command starts are the ones it terminates.
+
+**Streaming is token-level where the client supports it.** `ModelClient.complete` stays the
+contract and `stream` is an *optional* capability next to it, so a client that only implements
+`complete` keeps working — the loop takes the streaming path when it is there and the whole-response
+path when it is not. Deltas arrive as their own `model_delta` events; the terminal prints them in
+place, while the pipe renderer ignores them entirely (byte-identical output) and `--json` gets them
+as extra lines. The OpenAI-compatible path is exercised end to end against a **local server** that
+speaks the protocol (`tests/fake_provider.py`) — real urllib requests, real SSE, real status codes,
+including a whole session with a tool call and a `--provider openai` command line run. What that does
+*not* prove is how any particular vendor behaves (its rate limits, its wording, its streaming habits);
+that needs a key, and it has not been measured. The Anthropic path got the same treatment for the same
+reason: a local server speaking the Messages protocol, driven by the **real SDK** (complete, streaming
+with fragmented tool inputs, rate limits, and a whole session).
 
 **This repository is itself a standard scaffold project** (see [Layout](#layout)), so `zfc --create`
 and `zfc --worker` work here directly; [`src/workers/agent_worker.py`](src/workers/agent_worker.py)
 shows how to run an agent session from a standard Worker.
+
+## The interactive shell (`-i`)
+
+It prints a banner (mark, working directory, model, budget) and then:
+
+- plain input is a prompt; a **trailing `\` continues the line**, so pasting several lines is one
+  prompt instead of several turns
+- `/` starts a command: `/help` `/cost` `/status` `/sessions` `/resume <id>` `/new`
+  `/allow <tool>` `/skills` `/logo` `/entries` `/show <id>` `/fork <id>` `/exit`
+- **Ctrl-C interrupts the current turn** and returns to the prompt; leave with `/exit` or Ctrl-D
+- on a real terminal it uses stdlib `readline`: history lands in `.zoo/history`, and `/commands`
+  and `@paths` complete on Tab
+- writes and execs show **a unified diff** first: `y` allows this one, `a` allows that tool for the
+  rest of the session, anything else refuses
+
+Appearance degrades by capability rather than assuming a terminal: `--renderer auto|plain|ansi|rich`,
+`--color auto|always|never`, `--banner` / `--no-banner`. Three things worth knowing:
+
+- `plain` is the **pipe default** and is byte-identical to the output from before the shell existed;
+  under `--json` stdout carries one JSON object per line and nothing else (no banner, no status line)
+- when the stream cannot encode block characters (`cp1252` / `gbk` on Windows) the banner falls back
+  to plain ASCII instead of raising
+- `rich` is an **optional** enhancement (`pip install 'zoo-code-agent[tui]'`): nicer when present,
+  the built-in ANSI renderer otherwise — both render the same instructions and pass the same tests
 
 ## What a session consists of
 
@@ -296,8 +379,121 @@ fix empty-input handling; resume a session across a process restart without repe
 side effect.
 
 **Cannot** (current version, stated plainly): pass by editing the test (the benchmark fails you —
-that is the design, not a defect); there is no sandbox (`run_shell`'s boundary is the working
-directory plus the permission gate, not isolation); the real model path is untested here.
+that is the design, not a defect); count on isolation being there (see the boundary table below —
+it is best-effort and this machine cannot apply one); the real model path is untested here.
+
+### Where the boundary comes from (three tiers)
+
+The permission gate decides *whether* a command runs; it says nothing about what that command can
+then touch. That second layer is the sandbox, and it is explicit about being best-effort:
+
+| Tier | What it gives you | How to get it |
+|---|---|---|
+| `sandbox-exec` (macOS) | writes confined to the working directory and temp dirs; network allowed or cut | nothing to install — it ships with the system |
+| `bwrap` (Linux) | same, via bubblewrap (`--ro-bind / /` plus a writable bind of the root) | `apt install bubblewrap` or your distro's equivalent |
+| none | **only** the permission gate: the boundary is *authorization, not isolation* | `--sandbox none`, and what `auto` falls back to |
+
+**Availability is decided by actually running a sandboxed `exit 0`, not by looking for the binary.**
+That distinction is not hypothetical: on the machine this was written on, `/usr/bin/sandbox-exec`
+exists but refuses to apply (`sandbox_apply: Operation not permitted` — it was itself inside a
+sandbox). Trusting `which` would have announced "sandbox enabled" and then failed every single
+command with an error nobody could act on. So when the probe fails, the session says so up front:
+the banner and `/status` both print the effective boundary.
+
+`--sandbox auto|strict|none` picks the tier (`auto` by default) and `--sandbox-no-network` cuts the
+network inside the boundary. **What it does not do**: reads are *not* restricted (the agent has to
+read system files to work), and the network is all-or-nothing rather than a domain allowlist. Those
+choices are written down rather than hidden, and real isolation is **unmeasured on this machine** —
+the test that checks it skips with that reason stated, so the claim stays checkable elsewhere.
+
+### Forking a session
+
+Trying two approaches is the normal way to work, so being able to go *back* matters. Every session
+record now carries a stable address (`e1`, `e2`, …), and `--fork <session>:<entry>` starts a new
+session whose history stops at that entry — the original is left **byte-for-byte untouched**, which is
+the whole point (you can compare the two). The forked session also inherits the idempotency ledger and
+the token accounting, so replaying an already-paid effect does not pay twice and "what did this branch
+cost" stays true. What it does *not* inherit: in-flight state (a parked approval, an unfinished call) —
+copying that would leave the new branch waiting for a decision that can never arrive. And forking
+copies **session records, not process memory** — MCP servers and environment of the original process
+are not reproduced.
+
+`/entries` lists what is addressable, `/show <id>` prints one record, and `/fork <id>` branches in
+place (switching the shell onto the new branch). Those addresses also make history compaction
+honest: a folded summary names the entries it covers (`covers`), and each of them is still readable
+from the archive — "the raw entries are still there" is only useful if you can point at one.
+
+One thing to know about the CLI: a plain run starts from a **clean** state (it does not silently pick
+up yesterday's session), so `--fork` is the one path that deliberately reads the archive. Inside the
+shell, `/sessions` and `/resume` do that job within one process, and `/fork <id>` branches in place.
+
+### Subagents: `--subagent`
+
+Some work wants a lot of exploration that you never want to see. `--subagent` adds a `subagent(task)`
+tool that hands one task to a **separate process** and brings back only three things: the conclusion,
+the evidence (which tools ran, why it stopped) and the usage (tokens, records, wall clock). The child's
+full transcript stays in its own session — dumping it into the parent is exactly the context explosion
+this avoids; read it later by session id if you need the detail.
+
+Three properties are worth knowing, because they are the point of using a process at all:
+
+- **Isolation**: the child runs with a temporary working directory, so the framework's state file
+  (resolved relative to cwd) cannot collide with the parent's, while `--root` still points both at the
+  same repository.
+- **Its own gate**: the child's permission gate is its own and fail-closed. Whatever the parent
+  pre-authorized does *not* leak into the child; you have to pass it explicitly.
+- **Failure is an observation**: a non-zero exit, a timeout, or a child that produced no conclusion
+  comes back as a tool failure carrying the exit code and the tail of the child's stderr — the parent
+  session keeps going.
+
+**Budgets here are ceilings, not shares.** The parent passes a token budget and a wall-clock limit and
+the child enforces its own; there is no shared pool that decrements in real time. That would need the
+two processes to share a runtime ledger, which is the same problem as zoo-framework#248 — so this is
+stated rather than faked.
+
+### The full-screen interface: `--tui`
+
+`pip install 'zoo-code-agent[tui]'` then `zca --tui` gives the same session a shape on screen: the
+transcript in one place, tool calls in another, a status line (phase, turns, tokens, the effective
+boundary) and an input box. The keys and semantics are deliberately the same as the line-mode shell —
+`Ctrl-C` interrupts the *turn*, `Ctrl-Q` leaves, and approvals answer `y` / `a` / `n` through the very
+same `PermissionPolicy` object. It is another **consumer of the same event stream**, not a second
+implementation: the module has no loop of its own.
+
+The interesting part is how it is testable. The screen state is a **pure reduction** — `apply_event`
+folds one event into an immutable state, and `render_lines` projects that state into the lines that
+should be on screen. So "what the screen shows" is asserted in CI **without a terminal and without the
+UI library**, and the Textual layer is thin enough that two headless tests (`run_test()`) can drive the
+real widget tree: type a prompt, watch the scripted model answer appear, press `Ctrl-Q` to leave.
+Without the extra installed, `--tui` prints one line telling you what to install instead of a traceback.
+
+### Driving it from other programs: `--rpc` and the SDK
+
+`--rpc` makes the process long-lived and speaks **JSONL over stdio**: one JSON request per line in, one
+JSON object per line out. Methods are `prompt`, `cancel`, `status` and `stop`; responses carry the
+request's `id`, and **event lines are exactly the `--json` events** — the same payloads through the same
+renderer, so there is no second schema to drift. Two tests keep that honest by running the same scripted
+session both ways and asserting the event sequences match.
+
+```bash
+printf '%s\n' '{"id":1,"method":"prompt","text":"list the files"}' '{"id":2,"method":"stop"}' | zca --rpc
+```
+
+For Python in the same process there is `src/sdk.py`:
+
+```python
+from sdk import open_session
+
+session = open_session(model=my_client, root=".", session_id="embed")
+print(session.send("list the files")["stop_reason"])
+session.close()
+```
+
+Both entry points only *assemble* — they reuse `build_master` / `drive_with_renderer` / the session store.
+That is a checkable property rather than a promise: if either module ever grows its own turn loop, the
+same-source tests are the first thing to break. Two things to know: since neither has a human to ask,
+**approvals are fail-closed** (`--allow` still pre-authorizes), and the runtime is a **process-level
+singleton** — assembling a second session in one process needs `AgentRuntime().reset()` first.
 
 ### One measured lesson: turning on the push model is not enough
 
@@ -397,8 +593,8 @@ rule warns about (that file lives in the framework repository, not in this one).
 
 ## Status
 
-All eight changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
-merged into the 11 capability specs under [`openspec/specs/`](openspec/specs/) — those are the
+All 31 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
+merged into the 23 capability specs under [`openspec/specs/`](openspec/specs/) — those are the
 authoritative behaviour specs.
 
 | Change | Delivered | Capabilities |
@@ -411,8 +607,27 @@ authoritative behaviour specs.
 | `add-context-engineering` | Instruction injection, prompt layering, input-side accounting, history compaction | `context-engineering` |
 | `adopt-scaffold-layout` | Converted the whole repository to the standard scaffold layout | `project-layout` |
 | `add-console-entry` | Added the `zca` console entry back (`uvx` without cloning); fixed two problems that only appear when installed | `project-layout` (revised the delivery-shape clause) |
+| `add-agent-event-stream` | Session events published on framework topics, an explicit session phase, cooperative cancel | `agent-loop` |
+| `add-interactive-approval` | Write / exec asks first in a terminal; fail-closed elsewhere | `permission-gate` |
+| `add-lifecycle-hooks` | `pre_tool` / `post_tool` / `on_stop` for third-party policies and telemetry | `agent-loop` |
+| `add-skills` | On-demand instruction packs (`skills/<name>/SKILL.md`), progressive disclosure | `skills` |
+| `add-task-dispatch` | One-shot task Workers dispatched by the Master, with a concurrency ceiling | `task-dispatch` |
+| `defer-approval` | Approval became "park + decide by event" instead of blocking the event thread | `permission-gate` |
+| `fix-entry-and-approval-preview` | The in-place entry path really runs; approvals show a unified diff | `project-layout` / `permission-gate` |
+| `add-interactive-shell` | Real interactive surface: split render/input layers, slash commands, diff approvals, interrupt-the-turn, mark banner | `interactive-shell` |
+| `add-token-streaming` | Token-level streaming as an optional capability; deltas published as events; a failed model call now ends the turn instead of hanging until timeout | `model-client` / `agent-loop` / `interactive-shell` / `task-dispatch` |
+| `add-model-retry` | Model errors got a taxonomy; retryability is decided by class (rate limit / transient only), with backoff, a cap and a visible notice per retry | `model-client` / `cli-interface` / `interactive-shell` |
+| `add-openai-compat-provider` | An OpenAI-compatible provider (stdlib only, streaming included), selectable by configuration — the loop, renderer and retry layer needed no changes | `model-client` / `cli-interface` |
+| `add-tool-plugins` | External tools through the same gate (entry points, explicit modules, trusted project file); tools declare whether repeating them is safe, and retry decisions follow that | `tool-plugins` / `tool-invocation` / `cli-interface` |
+| `add-mcp-client` | A minimal stdio MCP client (`--mcp`): a third-party server's tools sit next to the built-ins behind the same gate, with fail-closed permission/idempotency mapping, a per-request timeout, and no orphan processes | `mcp-client` / `cli-interface` |
+| `add-shell-sandbox` | A real boundary for `run_shell` (sandbox-exec / bwrap, three tiers via `--sandbox`); availability proven by actually applying it; writes confined to the root; the boundary is reported every session | `shell-sandbox` / `coding-tools` / `cli-interface` |
+| `add-session-fork` | Stable addresses for session records; `--fork session:entry` branches without touching the original (ledger and accounting come along, in-flight state does not); folded summaries name the entries they cover | `session-fork` / `session-persistence` / `context-engineering` / `cli-interface` |
+| `add-subagents` | `--subagent`: one task per process, isolated state via a temporary cwd, only conclusion + evidence + usage come back, failures arrive as observations; the design also states what is *not* done (shared budget pool → framework #248) | `subagent` / `cli-interface` |
+| `add-rpc-and-sdk` | `--rpc` (JSONL over stdio) and `src/sdk.py` for embedding — both only assemble existing pieces, so the event schema is literally the `--json` one; approvals fail closed | `rpc-and-sdk` / `cli-interface` |
+| `add-fullscreen-tui` | `--tui`: the same session with a shape on screen — state is a pure reduction (so screen behaviour is asserted without a terminal), and the Textual layer is thin enough for headless tests | `fullscreen-tui` / `interactive-shell` |
+| `add-release-and-version` | One source for the version (`zca --version`), a real CHANGELOG, and a tag-driven release that refuses mismatched tags, builds, installs what it built, and publishes via trusted publishing | `release-and-version` |
 
-- Tests: **108 cases** green, `ruff` clean; `openspec list` shows no active change and all 11
+- Tests: **460 cases** green, `ruff` clean; `openspec list` shows no active change and all 23
   baseline specs pass `--strict`.
 - Base: `zoo-framework>=0.12,<0.13`, `requires-python>=3.11`.
 - What's next: [ROADMAP.md](ROADMAP.md) (中文) — Now / Next / Later, each with a verifiable

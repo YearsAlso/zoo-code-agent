@@ -32,6 +32,62 @@ def test_write_file_reports_overwrite(sandbox) -> None:
     assert "覆盖" in tool.handler({"path": "a.txt", "content": "2"})
 
 
+def test_write_file_preview_is_a_diff_and_touches_nothing(sandbox) -> None:
+    """新增文件的预览全是 `+` 行，且 MUST NOT 落盘。"""
+    tool = write_file_tool(sandbox)
+
+    preview = tool.preview({"path": "new.txt", "content": "x = 1\ny = 2\n"})
+
+    assert preview is not None
+    assert preview.startswith("--- a/new.txt")
+    assert "+++ b/new.txt" in preview
+    assert "+x = 1" in preview and "+y = 2" in preview
+    assert not (sandbox / "new.txt").exists(), "预览 MUST NOT 落盘"
+
+
+def test_write_file_preview_of_an_overwrite_shows_both_sides(sandbox) -> None:
+    tool = write_file_tool(sandbox)
+    tool.handler({"path": "a.txt", "content": "old\n"})
+
+    preview = tool.preview({"path": "a.txt", "content": "new\n"})
+
+    assert preview is not None
+    assert "-old" in preview and "+new" in preview
+    assert (sandbox / "a.txt").read_text(encoding="utf-8") == "old\n", "预览 MUST NOT 改写"
+
+
+def test_write_file_preview_does_not_create_parent_directories(sandbox) -> None:
+    """预览 MUST NOT 顺手建目录——建目录本身就是副作用。"""
+    preview = write_file_tool(sandbox).preview({"path": "deep/pkg/mod.py", "content": "x\n"})
+
+    assert preview is not None
+    assert not (sandbox / "deep").exists()
+
+
+def test_edit_file_preview_is_a_local_diff(sandbox) -> None:
+    (sandbox / "code.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    preview = edit_file_tool(sandbox).preview(
+        {"path": "code.py", "old": "return 1", "new": "return 2"}
+    )
+
+    assert preview is not None
+    assert "-    return 1" in preview
+    assert "+    return 2" in preview
+    assert (sandbox / "code.py").read_text(encoding="utf-8").endswith("return 1\n")
+
+
+def test_edit_file_preview_is_none_when_the_text_is_absent(sandbox) -> None:
+    """匹配不上时不给预览：错误该由执行体去报，预览不抢这件事。"""
+    (sandbox / "code.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert edit_file_tool(sandbox).preview({"path": "code.py", "old": "nope", "new": "y"}) is None
+
+
+def test_edit_file_preview_is_none_for_a_missing_file(sandbox) -> None:
+    assert edit_file_tool(sandbox).preview({"path": "ghost.py", "old": "a", "new": "b"}) is None
+
+
 def test_write_file_rejects_escape(outside) -> None:
     root, secret = outside
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from zoo_framework.event.event_channel_manager import EventChannelManager
@@ -22,7 +23,7 @@ from zoo_framework.workers.base_worker import BaseWorker
 import agent_events
 from context import compact_view, estimate_tokens
 from hooks import decide_pre_tool, notify_on_stop, notify_post_tool
-from model import Message, ToolCall
+from model import Message, ModelError, ModelResponse, ResponseDone, TextDelta, ToolCall
 from permissions import GATE_ASK, GATE_DENY, summarize_call
 from runtime import AgentRuntime, SessionState
 from session import SessionStore
@@ -37,7 +38,8 @@ STOP_BUDGET = "budget_exhausted"
 STOP_DEADLINE = "deadline_reached"
 STOP_MODEL = "model_stopped"
 STOP_CANCELLED = "cancelled"
-STOP_REASONS = (STOP_BUDGET, STOP_DEADLINE, STOP_MODEL, STOP_CANCELLED)
+STOP_MODEL_ERROR = "model_error"
+STOP_REASONS = (STOP_BUDGET, STOP_DEADLINE, STOP_MODEL, STOP_CANCELLED, STOP_MODEL_ERROR)
 
 PHASE_THINKING = "thinking"
 PHASE_TOOLS = "tools_pending"
@@ -79,7 +81,7 @@ def start_session(runtime: AgentRuntime, session_id: str, prompt: str) -> None:
     state.store.set("stop_reason", None)
     state.store.set("cancel_requested", False)
     state.store.set(APPROVAL_KEY, {})
-    state.store.set("phase", PHASE_THINKING)
+    _set_phase(state, PHASE_THINKING)
 
 
 def _requeue_unfinished(store: SessionStore) -> None:
@@ -111,13 +113,54 @@ def continue_session(runtime: AgentRuntime, session_id: str, prompt: str) -> Non
     store.append(role="user", content=prompt, turn=turn)
     store.set("stop_reason", None)
     store.set("cancel_requested", False)  # 取消是"这一轮"的事：新一轮重新开始
-    store.set("phase", PHASE_THINKING)
+    _set_phase(state, PHASE_THINKING)
+
+
+def resume_after_interrupt(runtime: AgentRuntime, session_id: str) -> None:
+    """把"这一轮被打断"的会话放回可推进的状态。
+
+    取消的语义是"不再往下走"（见 ``request_cancel``），于是 ``pending`` 里可能留下两种调用：
+
+    - **尚未派发**的：它们 MUST NOT 在下一轮被跑掉——使用者刚刚按了停止。但它们也不能就这么
+      挂着：模型已经写下"我要调用 X"，若那条 ``tool_use`` 永远没有对应的结果，下一次请求
+      带着"无主的工具调用"发给真实提供方会被直接拒绝。所以这里给它们各补一条**取消观察**
+      并标记完成：历史的形状仍然完整，模型也看得见"这条被取消了"。
+    - **已经派发**的：照常跑完并留下自己的观察（CPython 无法安全中断线程），本函数不碰它们。
+
+    ``stop_reason`` 与 ``cancel_requested`` 一并清掉——取消是"这一轮"的事，下一轮重新开始。
+    """
+    state = runtime.session(session_id)
+    for item in list(state.store.get("pending", [])):
+        if item.get("done") or item.get("dispatched"):
+            continue
+        _finish(
+            state,
+            {
+                "session_id": session_id,
+                "call_id": item["call_id"],
+                "name": item["name"],
+                "turn": item.get("turn", 0),
+            },
+            f"工具调用被取消（使用者中断了这一轮）：{item['name']}",
+        )
+    state.store.set("cancel_requested", False)
+    state.store.set("stop_reason", None)
 
 
 def _set_phase(state: SessionState, phase: str) -> None:
-    """记录会话阶段。**状态是给外面看的**：不必读记录列表就知道它在干什么。"""
-    if state.store.get("phase") != phase:
-        state.store.set("phase", phase)
+    """记录会话阶段，并在**真的变了**时发布一条事件。
+
+    去重是刻意的：同一个阶段被反复设置时发事件，只会让前端每轮都刷一条没变化的状态。
+    落状态在前、发事件在后，于是订阅者收到事件时读到的阶段已经更新——与记录和事件的
+    顺序约定一致（见 ``_append_lock``）。
+    """
+    if state.store.get("phase") == phase:
+        return
+    state.store.set("phase", phase)
+    agent_events.publish(
+        agent_events.PHASE_TOPIC,
+        {"type": "phase_changed", "session_id": state.session_id, "phase": phase},
+    )
 
 
 def _append(state: SessionState, event: dict[str, Any] | None, **record: Any) -> None:
@@ -201,7 +244,18 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
     _set_phase(state, PHASE_THINKING)
     # 输入侧记账：真实用量以提供方返回的 usage 为准，这里的估算值只参与预算与压缩判断。
     store.set("input_tokens_estimated", estimate_tokens("".join(item.content for item in messages)))
-    response = model.complete(messages, state.registry.declarations())
+    try:
+        response, streamed = _request_response(model, state, messages, turn)
+    except Exception as exc:
+        # **模型调用失败必须是"这一轮结束"，而不是"这一轮一直没结束"。**
+        #
+        # 循环体跑在框架的 Worker 里，而框架在 Worker 抛错时只记日志、不发结果事件
+        # （``WorkerDispatchCore.settle`` 遇到 error 直接 return）。于是异常若就这么往上抛，
+        # 调用方看到的是"什么都没发生"，一路干等到墙钟超时——最常见的失败（密钥不对、
+        # 限流、网络断）全都会表现成"卡住五分钟"。所以在这里把它翻译成一条错误事件 +
+        # 一个终止原因。
+        _fail(runtime, session_id, f"{type(exc).__name__}: {exc}")
+        return {"action": "stop", "stop_reason": STOP_MODEL_ERROR}
 
     tool_calls = [
         {"call_id": call.call_id, "name": call.name, "arguments": dict(call.arguments)}
@@ -215,14 +269,25 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
         {
             "type": "model_response",
             "text": response.text,
+            # 参数一并带上：交互面要显示"它打算改哪个文件"，而这条事件是前端唯一的
+            # 信息源——让前端自己去查会话状态，等于把"事件流是对外接口"这条约定作废。
             "tool_calls": [
-                {"call_id": call["call_id"], "name": call["name"]} for call in tool_calls
+                {
+                    "call_id": call["call_id"],
+                    "name": call["name"],
+                    "arguments": call["arguments"],
+                }
+                for call in tool_calls
             ],
+            # 正文是否**已经**以增量发布过。终端渲染器据此不再重复打印；管道与 JSON
+            # 消费者可以完全忽略它。
+            "streamed": streamed,
         },
         role="assistant",
         content=response.text,
         turn=turn,
         tool_calls=tool_calls,
+        streamed=streamed,
     )
     store.set("tokens_spent", store.get("tokens_spent", 0) + response.tokens)
 
@@ -246,6 +311,47 @@ def _model_turn(runtime: AgentRuntime, session_id: str) -> dict[str, Any]:
     return {"action": "model", "tool_calls": 0, "turn": turn, "stop_reason": STOP_MODEL}
 
 
+def _request_response(
+    model: Any, state: SessionState, messages: tuple[Message, ...], turn: int
+) -> tuple[ModelResponse, bool]:
+    """向模型要一次响应：**能流式就流式**，边收边把增量发出去。
+
+    Returns:
+        ``(响应, 正文是否已经以增量发布过)``。后者为真时才让终端渲染器跳过正文——
+        判据里含一条**一致性检查**：把增量拼起来必须等于定稿正文。不一致（提供方收回了一段
+        与最终结果不同的文本）时返回假，于是终端会把权威正文再打印一遍，而不是把一份
+        记录里查不到的文本留在屏幕上。
+
+    Raises:
+        ModelError: 流式调用没有给出收尾响应。静默当成空响应会让"脚本写漏 / 流断了"
+            看起来像"模型没话说"。
+    """
+    stream_fn = getattr(model, "stream", None)
+    if not callable(stream_fn):
+        return model.complete(messages, state.registry.declarations()), False
+
+    pieces: list[str] = []
+    response: ModelResponse | None = None
+    for item in stream_fn(messages, state.registry.declarations()):
+        if isinstance(item, TextDelta):
+            if item.text:
+                pieces.append(item.text)
+                agent_events.publish(
+                    agent_events.EVENT_TOPIC,
+                    {
+                        "type": "model_delta",
+                        "session_id": state.session_id,
+                        "turn": turn,
+                        "text": item.text,
+                    },
+                )
+        elif isinstance(item, ResponseDone):
+            response = item.response
+    if response is None:
+        raise ModelError("流式调用没有给出收尾响应（ResponseDone）——MUST NOT 当成空响应")
+    return response, bool(pieces) and "".join(pieces) == response.text
+
+
 def _stop(runtime: AgentRuntime, session_id: str, reason: str) -> None:
     """记录终止原因，并**只触发一次** ``on_stop`` 钩子。
 
@@ -262,6 +368,31 @@ def _stop(runtime: AgentRuntime, session_id: str, reason: str) -> None:
     # 终止同样是一条事件：订阅者不必轮询 store 就知道跑完了（那是本变更要消掉的东西）。
     agent_events.publish(agent_events.STOP_TOPIC, {"type": "stop", "reason": reason, **summary})
     notify_on_stop(state.hooks, reason, summary)
+
+
+def _fail(runtime: AgentRuntime, session_id: str, message: str) -> None:
+    """把一次失败变成"一条错误事件 + 一次终止"。
+
+    顺序是先发错误事件、再终止：订阅者按顺序收到它们，于是"为什么停的"在终止之前就已经
+    交代清楚了。终止原因用 ``model_error``——它不在"成功"那一侧，命令行会据此给出错误退出码
+    （退出码映射里未列出的原因一律按错误处理，这正是那条规格想要的）。
+    """
+    state = runtime.session(session_id)
+    _append(state, {"type": "error", "message": message}, role="error", content=message)
+    _stop(runtime, session_id, STOP_MODEL_ERROR)
+
+
+def failure_message(store: SessionStore) -> str | None:
+    """会话以失败收场时的原因文本；正常结束返回 ``None``。
+
+    存在的理由：**失败在循环里是数据**（一条错误记录 + 一个终止原因），而批量派发的消费者
+    要的是"这条任务错在哪"。把这次翻译放在循环这一侧，两边就不必去猜对方的形状——
+    批量曾经靠"Worker 抛异常"来发现失败，那条路已经被"不让人干等超时"取代了。
+    """
+    if store.get("stop_reason") != STOP_MODEL_ERROR:
+        return None
+    errors = [record for record in store.records() if record.get("role") == "error"]
+    return str(errors[-1].get("content")) if errors else "模型调用失败"
 
 
 def _stop_summary(state: SessionState) -> dict[str, Any]:
@@ -350,7 +481,10 @@ def on_tool_call(request: Any) -> None:
         return
 
     verdict = state.policy.assess(
-        tool.name, payload["arguments"], requires_approval=tool.requires_approval
+        tool.name,
+        payload["arguments"],
+        requires_approval=tool.requires_approval,
+        preview=_preview_for(tool, payload["arguments"]),
     )
     if not verdict.allowed:
         # 拒绝不是异常：写成一条观察回灌给模型，让它换一条路；会话不因此崩掉。
@@ -358,13 +492,17 @@ def on_tool_call(request: Any) -> None:
         _finish(state, payload, f"工具被拒绝（{verdict.reason}）：{tool.name}")
         return
 
-    _finish(state, payload, _run_tool(state, tool, payload))
+    _finish(state, payload, _run_tool_once(state, tool, payload))
 
 
 def _run_tool(state: SessionState, tool: Any, payload: dict[str, Any]) -> str:
     """执行体（含 pre_tool / post_tool），返回要回灌的观察文本。
 
     权限门已放行，才轮到 ``pre_tool`` 管"怎么做"——它不能把上面的拒绝翻回来。
+
+    Raises:
+        Exception: 工具抛出的**意外**异常。声明幂等的工具让异常继续上抛，于是框架的重试
+            真的发生；未声明幂等的工具由调用方 ``on_tool_call`` 收成观察，MUST NOT 被重试。
     """
     decision = decide_pre_tool(state.hooks, tool.name, payload["arguments"])
     if not decision.allow:
@@ -377,6 +515,25 @@ def _run_tool(state: SessionState, tool: Any, payload: dict[str, Any]) -> str:
     # post_tool 只在执行体真的被进入后通知；被拒绝的调用不触发。
     notify_post_tool(state.hooks, tool.name, arguments, result)
     return result
+
+
+def _run_tool_once(state: SessionState, tool: Any, payload: dict[str, Any]) -> str:
+    """跑一次工具，并按**幂等声明**决定意外异常的去向。
+
+    框架的重试挂在通道上，不认识单个工具；所以"这个工具该不该被重试"只能在这里判：
+
+    - 声明幂等 → 异常照常上抛，框架重试，重试是安全的；
+    - 未声明 → 把失败**收成一条观察**，于是没有异常可重试。``run_shell`` 再跑一遍可能是
+      第二次部署，``edit_file`` 再跑一遍会变成另一种结果——这类动作 MUST NOT 被重试。
+
+    取"失败关闭"那一侧与权限门、错误分类一致：没声明就不重试，代价只是少一次自愈机会。
+    """
+    try:
+        return _run_tool(state, tool, payload)
+    except Exception as exc:
+        if getattr(tool, "idempotent", False):
+            raise
+        return f"工具失败（未重试：{tool.name} 未声明可重复执行）：{type(exc).__name__}: {exc}"
 
 
 def _finish(state: SessionState, payload: dict[str, Any], result: str) -> None:
@@ -422,8 +579,25 @@ def _defer_approval(state: SessionState, payload: dict[str, Any]) -> None:
             "name": payload["name"],
             "arguments": dict(payload["arguments"]),
             "summary": summarize_call(payload["name"], payload["arguments"]),
+            "preview": _preview_for(state.registry.get(payload["name"]), payload["arguments"]),
         },
     )
+
+
+def _preview_for(tool: Any, arguments: Mapping[str, Any]) -> str | None:
+    """算一次审批预览。
+
+    预览是**提示**，不是判定：工具没声明、算不出来、或算的过程中抛错，都当作"没有预览"，
+    MUST NOT 让审批流程因此失败——它只是帮人做决定，不该成为新的失败点。
+    """
+    compute = getattr(tool, "preview", None)
+    if compute is None:
+        return None
+    try:
+        text = compute(dict(arguments))
+    except Exception:
+        return None
+    return text or None
 
 
 def on_approval_decision(request: Any) -> None:
@@ -451,7 +625,7 @@ def on_approval_decision(request: Any) -> None:
     }
     tool = state.registry.get(item["name"])
     if payload.get("allowed"):
-        _finish(state, call, _run_tool(state, tool, call))
+        _finish(state, call, _run_tool_once(state, tool, call))
     else:
         reason = payload.get("reason") or "审批未通过"
         _finish(state, call, f"工具被拒绝（{reason}）：{tool.name}")
@@ -510,6 +684,41 @@ def _messages(state: SessionState) -> tuple[Message, ...]:
             )
         )
     return tuple(messages)
+
+
+def fork_session(runtime: AgentRuntime, *, source_id: str, entry_id: str, target_id: str) -> None:
+    """从源会话的某一条目分叉出一条新会话。
+
+    **源会话一字不动**——那正是分叉的用处：两条路都留着，可以比。
+
+    带过去的三样东西，以及为什么不带另一样：
+
+    - 记录前缀（到该条目为止）：分叉的本体；
+    - 幂等账本：不带的话，新分支会把已经付过的副作用再付一次；
+    - token 记账：不带的话，"这条分支花了多少"会从零开始，于是那个数字是假的；
+    - **在飞状态不带**：挂起中的审批与未收尾的调用属于"这一刻的进程"，复制过去会让新会话停在
+      一个等待不可能到来的决定的状态上。
+
+    Raises:
+        ValueError: 目标会话已经有记录——拒绝覆盖，静默覆盖会毁掉别人正在用的分支。
+        UnknownEntry: 地址不存在（由 ``SessionStore`` 抛出并给出可用范围）。
+    """
+    source_state = runtime.session(source_id)
+    target_state = runtime.session(target_id)
+    if target_state.store.records():
+        raise ValueError(f"目标会话 {target_id!r} 里已经有记录，拒绝覆盖")
+
+    target_state.store.replace_records(source_state.store.prefix_through(entry_id))
+    target_state.ledger.restore(source_state.ledger.snapshot())
+    target_state.store.set("tokens_spent", source_state.store.get("tokens_spent", 0))
+    target_state.store.set(
+        "input_tokens_estimated", source_state.store.get("input_tokens_estimated", 0)
+    )
+    target_state.store.set("stop_reason", None)
+    target_state.store.set("cancel_requested", False)
+    target_state.store.set("pending", [])
+    target_state.store.set(APPROVAL_KEY, {})
+    target_state.store.set("phase", None)
 
 
 def make_agent_worker(session_id: str, name: str = "AgentLoop") -> type[BaseWorker]:

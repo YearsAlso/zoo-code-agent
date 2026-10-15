@@ -10,6 +10,7 @@ from loop import (
     PHASE_TOOLS,
     STOP_CANCELLED,
     STOP_MODEL,
+    _set_phase,
 )
 from model import ModelResponse, ScriptedClient, ToolCall
 from runtime import AgentRuntime
@@ -67,7 +68,10 @@ def test_events_are_delivered_by_the_pipeline_in_model_order(sandbox) -> None:
     summary = drive_session(master, "stream", on_event=on_event, timeout=60)
 
     assert summary["stop_reason"] == STOP_MODEL
-    assert kinds == [
+    # 阶段事件与正文增量也走这条流（前端靠它们显示状态与边生成边看见），
+    # 但"会话事件的顺序"这条断言只关心后者。
+    chatter = {"phase_changed", "model_delta"}
+    assert [kind for kind in kinds if kind not in chatter] == [
         "model_response",
         "tool_result",
         "tool_result",
@@ -133,4 +137,48 @@ def test_cancel_stops_at_the_next_boundary(sandbox) -> None:
     assert client.calls == 1, "取消后 MUST NOT 再向模型要一次响应"
     assert runtime.session("cancel").store.by_role("tool") == (), (
         "取消后 MUST NOT 再派发尚未派发的工具调用"
+    )
+
+
+def test_phase_changes_are_published_and_never_repeat_for_the_same_phase() -> None:
+    """阶段变化 MUST 发事件，同一个阶段 MUST NOT 重复发。
+
+    前端靠这条流显示"在想 / 在跑工具 / 在等审批"；重复发只会让它每轮刷一条没变化的状态。
+    """
+    agent_events.bind()
+    seen: list[str] = []
+    agent_events.subscribe(on_phase=seen.append)
+
+    state = AgentRuntime().session("phases")
+    for phase in (PHASE_THINKING, PHASE_THINKING, PHASE_TOOLS, PHASE_THINKING):
+        _set_phase(state, phase)
+
+    assert [event["phase"] for event in seen] == [PHASE_THINKING, PHASE_TOOLS, PHASE_THINKING]
+    assert state.store.get("phase") == PHASE_THINKING
+
+
+def test_phase_event_precedes_the_step_it_describes(sandbox) -> None:
+    """阶段事件 MUST 先于该步的其它事件——订阅者收到它时，阶段已经落定。"""
+    master = build_master(
+        model=_two_tool_calls_then_stop(),
+        session_id="phase-order",
+        prompt="读两个文件",
+        root=sandbox,
+        budget=1000,
+        timeout_seconds=60,
+    )
+
+    kinds: list[str] = []
+    phases: list[str] = []
+
+    def on_event(event: dict) -> None:
+        kinds.append(event["type"])
+        if event["type"] == "phase_changed":
+            phases.append(event["phase"])
+
+    drive_session(master, "phase-order", on_event=on_event, timeout=60)
+
+    assert phases == [PHASE_TOOLS, PHASE_THINKING, PHASE_STOPPED]
+    assert kinds.index("phase_changed") < kinds.index("tool_result"), (
+        "先宣布「在跑工具」，再出现结果"
     )

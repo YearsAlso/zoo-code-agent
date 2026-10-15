@@ -33,7 +33,7 @@ from zoo_framework.reactor.event_reactor import EventReactor
 from zoo_framework.reactor.event_reactor_manager import EventReactorManager
 from zoo_framework.workers.base_worker import BaseWorker
 
-from loop import run_turn, start_session
+from loop import failure_message, run_turn, start_session
 from model import ModelClient
 from runtime import AgentRuntime
 
@@ -226,11 +226,17 @@ def _index_of(result: Any) -> int | None:
 def _summary(state: Any) -> dict[str, Any]:
     """一条任务跑完后的摘要——与终止事件、``on_stop`` 钩子同构的字段。"""
     store = state.store
-    return {
+    summary = {
         "stop_reason": store.get("stop_reason"),
         "records": len(store.records()),
         "tokens_spent": store.get("tokens_spent", 0),
     }
+    # 模型调用失败在循环里是"一条错误记录 + 一个终止原因"，而批量的消费者要的是"错在哪"。
+    # 把它翻译成 ``error`` 字段，调用方（命令行、脚本）才不必去认内部的终止原因词汇表。
+    message = failure_message(store)
+    if message is not None:
+        summary["error"] = message
+    return summary
 
 
 def _ensure_relay(sink: Callable[[Any], None] | None) -> None:

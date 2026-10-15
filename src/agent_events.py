@@ -33,6 +33,13 @@ APPROVAL_TOPIC = "agent.approval.requested"
 DECISION_TOPIC = "agent.approval.decided"
 """审批决定主题：外部把决定发布回来，循环据此执行或拒绝。"""
 
+PHASE_TOPIC = "agent.phase"
+"""阶段主题：会话阶段**变化**时发布。
+
+没有它，"它现在在想还是在跑工具"就只能靠轮询会话状态回答——而事件流才是对外接口。
+它也是 RPC / SDK 的前置：前端要显示状态，靠的就是这条。
+"""
+
 RELAY_NAME = "AgentEventRelay"
 """中继反应器名。按名字判断是否已挂，避免容器复位后重复注册。"""
 
@@ -43,6 +50,7 @@ _listeners: dict[str, Callable[[dict[str, Any]], None] | None] = {
     STOP_TOPIC: None,
     APPROVAL_TOPIC: None,
     DECISION_TOPIC: None,
+    PHASE_TOPIC: None,
 }
 """当前订阅者。随每一轮驱动替换——不必反复注册反应器（重复注册会让同一事件投递多次）。"""
 
@@ -53,6 +61,7 @@ def subscribe(
     on_stop: Callable[[dict[str, Any]], None] | None = _UNSET,
     on_approval: Callable[[dict[str, Any]], None] | None = _UNSET,
     on_decision: Callable[[dict[str, Any]], None] | None = _UNSET,
+    on_phase: Callable[[dict[str, Any]], None] | None = _UNSET,
 ) -> None:
     """登记消费者：**只改显式传入的那几路**，传 ``None`` 即解绑该路。
 
@@ -64,6 +73,7 @@ def subscribe(
         (STOP_TOPIC, on_stop),
         (APPROVAL_TOPIC, on_approval),
         (DECISION_TOPIC, on_decision),
+        (PHASE_TOPIC, on_phase),
     ):
         if listener is not _UNSET:
             _listeners[topic] = listener

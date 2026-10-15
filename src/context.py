@@ -229,9 +229,15 @@ def compact_view(
         return [dict(record) for record in records], None
 
     summary = summarize_dropped(dropped)
+    # 摘要**标明它覆盖了哪些条目**：压缩只动视图，原文仍在存档里；不写出地址的话，
+    # 使用者就没有任何办法把被折叠的那段调出来——"原始条目仍在"会变成真的但没用。
+    covered = [str(record.get("entry_id", "")) for record in dropped if record.get("entry_id")]
+    summary_record: dict[str, Any] = {"role": "user", "content": summary, "synthetic": True}
+    if covered:
+        summary_record["covers"] = covered
     view = [
         *head,
-        {"role": "user", "content": summary, "synthetic": True},
+        summary_record,
         *[record for group in tail for record in group],
     ]
     return view, summary

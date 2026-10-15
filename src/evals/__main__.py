@@ -59,9 +59,19 @@ def main(argv: list[str] | None = None) -> int:
 
     model = None
     if args.real_provider:
-        from ..providers import AnthropicClient
+        from model import ModelError
+        from providers import AnthropicClient
+        from retry import retrying
 
-        model = AnthropicClient(system="你是一个只改源码、不改测试的编码助手。")
+        # 构造失败（缺 extras、缺密钥）在这里就翻译成一行可操作的报错：否则使用者拿到的是
+        # 一段 SDK traceback，而真正该做的事（装 extras / 设密钥）得自己猜。
+        try:
+            # 基准也走同一套重试：一次限流抖动不该让某个任务在统计上显示成"失败"。
+            # 它不带 ``--retries`` 开关，用默认值——基准要的是可比性，不是调参空间。
+            model = retrying(AnthropicClient(system="你是一个只改源码、不改测试的编码助手。"))
+        except ModelError as exc:
+            print(f"[error] {exc}")
+            return 1
 
     runs = run_all(
         task_ids=tuple(args.tasks) if args.tasks else None,

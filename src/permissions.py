@@ -22,6 +22,12 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+MAX_SUMMARY_VALUE_CHARS = 160
+"""单个参数值在摘要里的长度上限——超过就截断并标注原文有多少字符。"""
+
+MAX_SUMMARY_CHARS = 400
+"""整行摘要的长度上限，与参数个数无关。"""
+
 
 @dataclass(frozen=True)
 class PermissionRequest:
@@ -31,11 +37,14 @@ class PermissionRequest:
         tool_name: 工具名。
         arguments: 调用参数（原样传递，审批者可据此判断具体内容）。
         summary: 人类可读的一行摘要，供审批界面直接展示。
+        preview: 待批改动的预览（写 / 编辑类工具给 unified diff）。``None`` 表示该工具没有
+            可预览的改动，界面按摘要处理。
     """
 
     tool_name: str
     arguments: Mapping[str, Any]
     summary: str
+    preview: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,9 +61,27 @@ class PermissionVerdict:
 
 
 def _summarize(tool_name: str, arguments: Mapping[str, Any]) -> str:
-    """把调用压成一行摘要。"""
-    parts = " ".join(f"{key}={value!r}" for key, value in arguments.items())
-    return f"{tool_name}({parts})"
+    """把调用压成一行摘要，并**限长**。
+
+    限长不是美观问题：``arguments`` 原样拼接时，摘要长度随参数大小线性增长——一个几十行的
+    文件就让提示行膨胀到几百字符（写文件工具的 ``content`` 参数就是整个文件），使用者反而
+    看不到"哪个工具、改哪个路径"这些真正要做决定的信息。
+
+    ``repr`` 会把换行转义掉，所以结果必然是单行。
+    """
+    parts = " ".join(f"{key}={_compact(value)}" for key, value in arguments.items())
+    line = f"{tool_name}({parts})"
+    if len(line) > MAX_SUMMARY_CHARS:
+        return f"{line[:MAX_SUMMARY_CHARS]}…（摘要已截断，共 {len(line)} 字符）"
+    return line
+
+
+def _compact(value: Any, limit: int = MAX_SUMMARY_VALUE_CHARS) -> str:
+    """把单个参数值压成短片段。"""
+    text = repr(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}…（共 {len(text)} 字符）"
 
 
 def summarize_call(tool_name: str, arguments: Mapping[str, Any]) -> str:
@@ -102,10 +129,29 @@ class PermissionPolicy:
         no_approver_hint: str | None = None,
         defer_approval: bool = False,
     ) -> None:
-        self._allowed = frozenset(allowed)
+        # 用可变的 set 而不是 frozenset：审批界面上的"本会话都放行这个工具"要在运行期
+        # 加进白名单。可变性被封在 ``allow_tool`` 里，外部拿不到集合本身。
+        self._allowed = set(allowed)
         self._approver = approver
         self._no_approver_hint = no_approver_hint
         self.defers_approval = defer_approval
+
+    @property
+    def allowed(self) -> frozenset[str]:
+        """当前预授权名单（只读视图）。"""
+        return frozenset(self._allowed)
+
+    def allow_tool(self, tool_name: str) -> bool:
+        """把某个工具加进**本会话**的白名单。
+
+        Returns:
+            ``True`` 表示这次调用确实改变了名单（首次放行），``False`` 表示它已经在里面。
+            返回布尔而不是静默成功，是为了让界面能如实说明"已经放行过了"。
+        """
+        if tool_name in self._allowed:
+            return False
+        self._allowed.add(tool_name)
+        return True
 
     def precheck(self, tool_name: str, *, requires_approval: bool) -> GateDecision:
         """第一段判定：**不调用审批者**，只说"放行 / 拒绝 / 需要审批"。
@@ -127,9 +173,19 @@ class PermissionPolicy:
         return GateDecision(GATE_ASK, "需要审批")
 
     def assess(
-        self, tool_name: str, arguments: Mapping[str, Any], *, requires_approval: bool
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        requires_approval: bool,
+        preview: str | None = None,
     ) -> PermissionVerdict:
-        """判定一次工具调用是否放行。"""
+        """判定一次工具调用是否放行。
+
+        Args:
+            preview: 待批改动的预览文本，原样放进 ``PermissionRequest`` 交给审批者；
+                ``None`` 表示这次调用没有可预览的改动。判定本身不读它。
+        """
         if not requires_approval:
             return PermissionVerdict(True, "只读操作，无需审批")
         if tool_name in self._allowed:
@@ -140,7 +196,9 @@ class PermissionPolicy:
                 self._no_approver_hint or "该操作需要审批，但当前没有配置审批者（失败关闭）",
             )
 
-        request = PermissionRequest(tool_name, dict(arguments), _summarize(tool_name, arguments))
+        request = PermissionRequest(
+            tool_name, dict(arguments), _summarize(tool_name, arguments), preview
+        )
         try:
             approved = bool(self._approver(request))
         except Exception as exc:  # 审批者抛错必须失败关闭，且理由要传出去

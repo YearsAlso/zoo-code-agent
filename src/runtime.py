@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from hooks import Hooks
 from model import ModelClient
 from permissions import PermissionPolicy
 from session import SessionStore
-from tools import IdempotencyLedger, ToolRegistry, default_registry
+from tools import IdempotencyLedger, ToolRegistry, build_registry
 
 LEDGER_KEY = "ledger"
 """幂等账本在会话状态作用域内的键名。"""
@@ -42,6 +43,8 @@ class SessionState:
         policy: PermissionPolicy | None = None,
         hooks: Hooks | None = None,
         model: ModelClient | None = None,
+        extra_tools: tuple[Any, ...] = (),
+        boundary: Any = None,
     ) -> None:
         self.session_id = session_id
         self.store = SessionStore(session_id)
@@ -50,7 +53,11 @@ class SessionState:
         self.policy = policy or PermissionPolicy()
         self.hooks = hooks
         self.model = model
-        self.registry: ToolRegistry = default_registry(root, self.ledger)
+        # 外部工具与内置工具进**同一个**注册表：同一条权限门、同一条审计路径、
+        # 同一份发给模型的声明。
+        self.registry: ToolRegistry = build_registry(
+            root, self.ledger, extra=extra_tools, boundary=boundary
+        )
 
     def _persist_ledger(self, snapshot: dict[str, Any]) -> None:
         self.store.set(LEDGER_KEY, snapshot)
@@ -77,6 +84,10 @@ class AgentRuntime:
         self.policy: PermissionPolicy = PermissionPolicy()
         self.hooks: Hooks | None = None
         self.sessions: dict[str, SessionState] = {}
+        self.extra_tools: tuple[Any, ...] = ()
+        """外部工具（插件 / 显式模块 / 项目级声明）。装配时一次性定下，换会话不换工具集。"""
+        self.boundary: Any = None
+        """执行命令时的有效边界（``sandbox.Boundary``）。与工具集一样，装配时定下。"""
 
     def configure(
         self,
@@ -87,6 +98,8 @@ class AgentRuntime:
         deadline: float | None = None,
         policy: PermissionPolicy | None = None,
         hooks: Hooks | None = None,
+        extra_tools: Sequence[Any] = (),
+        boundary: Any = None,
     ) -> None:
         """装配运行期。
 
@@ -103,6 +116,18 @@ class AgentRuntime:
         if policy is not None:
             self.policy = policy
         self.hooks = hooks
+        self.extra_tools = tuple(extra_tools)
+        self.boundary = boundary
+
+    def set_root(self, root: Path | str) -> None:
+        """在装配**之前**先定下工作目录。
+
+        会话的工具集在 ``AgentRuntime.session()`` 第一次取用时就用当时的根建好了，且之后
+        不再重建。若一个会话在 ``configure()`` 之前被取用（交互式外壳里，使用者完全可能
+        先敲一条命令再敲提示），它会拿 ``Path.cwd()`` 去建工具集——工具于是写到别处，
+        而命令输出看不出任何异常。这个方法把根提前，堵掉那个窗口。
+        """
+        self.root = Path(root)
 
     def session(self, session_id: str) -> SessionState:
         """取（或建立）一个会话。
@@ -111,7 +136,14 @@ class AgentRuntime:
         """
         state = self.sessions.get(session_id)
         if state is None:
-            state = SessionState(session_id, self.root, self.policy, self.hooks)
+            state = SessionState(
+                session_id,
+                self.root,
+                self.policy,
+                self.hooks,
+                extra_tools=self.extra_tools,
+                boundary=self.boundary,
+            )
             self.sessions[session_id] = state
         else:
             # 运行期是策略的真源：会话可能在 configure() 之前就被建出来（预置状态的

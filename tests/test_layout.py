@@ -87,3 +87,40 @@ def test_pytest_imports_the_way_the_scaffold_does() -> None:
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert data["tool"]["pytest"]["ini_options"]["pythonpath"] == ["src"]
+
+
+RELATIVE_IMPORT = re.compile(r"^\s*from\s+\.+\S*\s+import\b")
+"""相对导入。顶层模块里出现它必失败——`python src/main.py` 下没有父包。"""
+
+
+def _relative_imports(path: Path) -> list[str]:
+    """某个文件里的相对导入，返回 `文件:行:原文` 形式的清单。"""
+    found = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if RELATIVE_IMPORT.match(line):
+            found.append(f"{path.name}:{number}: {line.strip()}")
+    return found
+
+
+def test_engine_modules_never_use_relative_imports() -> None:
+    """引擎模块 MUST 只以顶层名字互导——相对导入只在 `src` 被当作包加载时成立。
+
+    这条不是风格偏好：`python src/main.py -p "..."` 与 `--eval --real-provider` 两条文档
+    承诺过的入口，都因为这一处栽过（实测 2026-10-14，见 `fix-entry-and-approval-preview`）。
+    """
+    offenders = [item for path in sorted(SRC.glob("*.py")) for item in _relative_imports(path)]
+
+    assert offenders == [], f"引擎模块出现相对导入：{offenders}"
+
+
+def test_evals_package_never_imports_across_the_src_boundary() -> None:
+    """`src/evals/` 是包，包内相对导入（`from .runner import`）可以；`from ..x` 跨到
+    `src/` 顶层不行——就地运行时 `evals` 自己就是顶层包，`..` 直接越界。"""
+    offences = [
+        f"{path.name}:{number}: {line.strip()}"
+        for path in sorted((SRC / "evals").glob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if line.lstrip().startswith("from ..")
+    ]
+
+    assert offences == [], f"evals 跨边界相对导入：{offences}"

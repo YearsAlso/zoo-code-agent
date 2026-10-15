@@ -18,6 +18,8 @@ htmlcov/
 .env
 logs/
 *.log
+backups/
+*.pic
 
 # 框架状态机落盘与备份
 .zoo/

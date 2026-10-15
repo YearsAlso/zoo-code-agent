@@ -52,8 +52,8 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install ruff
-      - run: ruff check src tests
-      - run: ruff format --check src tests
+      - run: ruff check src tests bench
+      - run: ruff format --check src tests bench
 
   extras:
     # 装了可选 extras 之后的**同一批用例**必须照样全绿：渲染契约是 ops、全屏界面的契约是

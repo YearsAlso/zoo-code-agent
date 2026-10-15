@@ -52,8 +52,8 @@ jobs:
       - name: Lint
         run: |
           pip install ruff
-          ruff check src tests
-          ruff format --check src tests
+          ruff check src tests bench
+          ruff format --check src tests bench
 
   build:
     name: 构建 sdist 与 wheel

@@ -10,9 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import agent_events
-import cli
-from model import (
+from kernel import agent_events
+from kernel.model import (
     AuthError,
     BadRequestError,
     ModelResponse,
@@ -26,8 +25,9 @@ from model import (
     is_retryable,
 )
 from providers import classify_anthropic_error
-from render import AnsiRenderer, PlainRenderer, render_ops
-from retry import RetryNotice, backoff_delay, retrying
+from providers.retry import RetryNotice, backoff_delay, retrying
+from surfaces import cli
+from surfaces.render import AnsiRenderer, PlainRenderer, render_ops
 
 SESSION = "retry"
 
@@ -262,9 +262,11 @@ def _args(**overrides):
 
 
 def test_the_cli_wraps_the_real_provider_in_retries(monkeypatch) -> None:
-    from retry import RetryingModelClient
+    from providers import select as select_module
+    from providers.retry import RetryingModelClient
 
-    monkeypatch.setattr(cli, "AnthropicClient", lambda **_kwargs: _Flaky([]))
+    # 注入点随实现走：选型在 `providers.select`，所以补丁打在它解析 `AnthropicClient` 的地方。
+    monkeypatch.setattr(select_module, "AnthropicClient", lambda **_kwargs: _Flaky([]))
 
     model = cli.build_model(_args(retries=3))
 
@@ -273,7 +275,9 @@ def test_the_cli_wraps_the_real_provider_in_retries(monkeypatch) -> None:
 
 
 def test_zero_retries_returns_the_client_untouched(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "AnthropicClient", lambda **_kwargs: _Flaky([]))
+    from providers import select as select_module
+
+    monkeypatch.setattr(select_module, "AnthropicClient", lambda **_kwargs: _Flaky([]))
 
     model = cli.build_model(_args(retries=0))
 

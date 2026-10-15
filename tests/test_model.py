@@ -6,7 +6,7 @@ import socket
 
 import pytest
 
-from model import (
+from kernel.model import (
     EXTRA_NAME,
     Message,
     ModelClient,

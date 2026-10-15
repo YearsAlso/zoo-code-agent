@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from agent import build_master, drive_session
-from loop import STOP_MODEL
-from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
-from runtime import AgentRuntime, reset_process_state_carriers
+from engine.agent import build_master, drive_session
+from engine.loop import STOP_MODEL
+from engine.runtime import AgentRuntime, reset_process_state_carriers
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from kernel.permissions import PermissionPolicy
 from tools import idempotency_key
 
 

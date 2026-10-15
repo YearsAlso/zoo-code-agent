@@ -10,8 +10,8 @@ import re
 import tomllib
 from pathlib import Path
 
-import cli
-import version as version_module
+from kernel import version as version_module
+from surfaces import cli
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
@@ -45,8 +45,8 @@ def test_the_changelog_top_entry_matches_the_version() -> None:
 
 def test_the_banner_uses_the_single_source() -> None:
     """横幅不再自己抄一份版本号。"""
-    from render import banner_rows
-    from version import version
+    from kernel.version import version
+    from surfaces.render import banner_rows
 
     rows = banner_rows(root=".", model="m", budget=1, version=version(), logo=False)
     text = "\n".join("".join(run for run, _ in row) for row in rows)

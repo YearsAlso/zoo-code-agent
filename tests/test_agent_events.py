@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import agent_events
-from agent import build_master, drive_session
-from loop import (
+from engine.agent import build_master, drive_session
+from engine.loop import (
     PHASE_STOPPED,
     PHASE_THINKING,
     PHASE_TOOLS,
@@ -12,8 +11,9 @@ from loop import (
     STOP_MODEL,
     _set_phase,
 )
-from model import ModelResponse, ScriptedClient, ToolCall
-from runtime import AgentRuntime
+from engine.runtime import AgentRuntime
+from kernel import agent_events
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
 
 
 def test_publish_reaches_a_bound_reactor_and_is_a_noop_without_subscribers() -> None:

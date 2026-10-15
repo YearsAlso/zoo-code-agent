@@ -41,7 +41,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--real-provider",
         action="store_true",
-        help="使用 AnthropicClient（需要 ANTHROPIC_API_KEY）；默认用脚本化模型",
+        help=(
+            "用真实提供方跑（需要密钥；默认用脚本化模型）。配 --provider / --base-url 可以指向"
+            "任意 OpenAI 兼容端点"
+        ),
+    )
+    parser.add_argument(
+        "--provider",
+        choices=("anthropic", "openai"),
+        default="anthropic",
+        help="真实提供方：anthropic（默认）或 openai（任何 OpenAI 兼容端点）",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI 兼容端点的地址前缀（仅在 --provider openai 时用）",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="模型 id（不给就用提供方的默认值）",
     )
     return parser
 
@@ -59,16 +78,36 @@ def main(argv: list[str] | None = None) -> int:
 
     model = None
     if args.real_provider:
-        from model import ModelError
-        from providers import AnthropicClient
-        from retry import retrying
+        from kernel.model import ModelError
+        from providers.retry import retrying
 
+        system = "你是一个只改源码、不改测试的编码助手。"
         # 构造失败（缺 extras、缺密钥）在这里就翻译成一行可操作的报错：否则使用者拿到的是
         # 一段 SDK traceback，而真正该做的事（装 extras / 设密钥）得自己猜。
         try:
             # 基准也走同一套重试：一次限流抖动不该让某个任务在统计上显示成"失败"。
             # 它不带 ``--retries`` 开关，用默认值——基准要的是可比性，不是调参空间。
-            model = retrying(AnthropicClient(system="你是一个只改源码、不改测试的编码助手。"))
+            if args.provider == "openai":
+                # 任何说 OpenAI 协议的端点（自建 vLLM / 网关 / 中转服务）都能拿来跑基线——
+                # 否则"真实模型下的基线数字"只有 Anthropic 一家能测，而这条路的实际使用者
+                # 大多在别处。
+                from providers.openai_compat import DEFAULT_OPENAI_MODEL
+                from providers.openai_compat import build as build_openai_client
+
+                model = retrying(
+                    build_openai_client(
+                        base_url=args.base_url,
+                        model=args.model or DEFAULT_OPENAI_MODEL,
+                        system=system,
+                    )
+                )
+            else:
+                from providers import AnthropicClient
+
+                kwargs = {"system": system}
+                if args.model:
+                    kwargs["model"] = args.model
+                model = retrying(AnthropicClient(**kwargs))
         except ModelError as exc:
             print(f"[error] {exc}")
             return 1

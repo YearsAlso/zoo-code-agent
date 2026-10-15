@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
-from agent import build_master, drive_session
-from context import compose_system_prompt
-from model import Message, ModelResponse, ToolCall, ToolDeclaration
-from runtime import AgentRuntime
-from skills import load_skills
+from engine.agent import build_master, drive_session
+from engine.runtime import AgentRuntime
+from kernel.context import compose_system_prompt
+from kernel.model import Message, ModelResponse, ToolCall, ToolDeclaration
+from kernel.skills import load_skills
 from tools import ToolError, read_skill_tool
 
 SENTINEL = "UNIQUE_SKILL_BODY_SENTINEL"

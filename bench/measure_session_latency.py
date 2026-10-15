@@ -22,9 +22,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 """脚手架布局里模块平铺在 ``src/`` 下；脚本直接运行时需要自己把它放上路径。"""
 
-from agent import build_master, drive_session  # noqa: E402  路径注入必须先于导入
-from model import ModelResponse, ScriptedClient, ToolCall  # noqa: E402
-from runtime import AgentRuntime, reset_all  # noqa: E402
+from engine.agent import build_master, drive_session  # noqa: E402  路径注入必须先于导入
+from engine.runtime import AgentRuntime, reset_all  # noqa: E402
+from kernel.model import ModelResponse, ScriptedClient, ToolCall  # noqa: E402
 
 REPEATS = 2
 """每个模式跑几次。关闭推模型时每次至少等一个 5 秒节拍，故不宜取大。"""

@@ -5,8 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import agent_events
-from loop import (
+from engine.loop import (
     PHASE_APPROVAL,
     PHASE_TOOLS,
     _preview_for,
@@ -15,9 +14,10 @@ from loop import (
     on_tool_call,
     start_session,
 )
-from model import ModelResponse, ScriptedClient
-from permissions import GATE_ASK, GATE_DENY, PermissionPolicy
-from runtime import AgentRuntime
+from engine.runtime import AgentRuntime
+from kernel import agent_events
+from kernel.model import ModelResponse, ScriptedClient
+from kernel.permissions import GATE_ASK, GATE_DENY, PermissionPolicy
 
 SESSION = "approve"
 

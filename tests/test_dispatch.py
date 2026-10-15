@@ -7,10 +7,10 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
-from agent import build_master
-from dispatch import TASK_WORKER_PREFIX, Task, dispatch_tasks, load_tasks
-from model import Message, ModelResponse, ScriptedClient, ToolDeclaration
-from runtime import AgentRuntime
+from engine.agent import build_master
+from engine.dispatch import TASK_WORKER_PREFIX, Task, dispatch_tasks, load_tasks
+from engine.runtime import AgentRuntime
+from kernel.model import Message, ModelResponse, ScriptedClient, ToolDeclaration
 
 
 class _Probe:

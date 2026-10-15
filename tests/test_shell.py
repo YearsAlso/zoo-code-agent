@@ -9,16 +9,16 @@ from __future__ import annotations
 import io
 import json
 
-import cli
-from commands import COMMANDS
-from loop import PHASE_STOPPED
-from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
-from prompting import DEFAULT_HISTORY, StreamLineSource, read_prompt
-from render import AnsiRenderer, PlainRenderer, make_renderer, zoo_mark_rows
-from runtime import AgentRuntime
-from session import SessionStore
-from shell import Shell
+from engine.loop import PHASE_STOPPED
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from kernel.permissions import PermissionPolicy
+from kernel.prompting import DEFAULT_HISTORY, StreamLineSource, read_prompt
+from kernel.session import SessionStore
+from surfaces import cli
+from surfaces.commands import COMMANDS
+from surfaces.render import AnsiRenderer, PlainRenderer, make_renderer, zoo_mark_rows
+from surfaces.shell import Shell
 
 SESSION = "shell-test"
 CWD = "."

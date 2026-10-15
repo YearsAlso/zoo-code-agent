@@ -7,9 +7,8 @@ import json
 import signal
 from pathlib import Path
 
-import cli
-import shell
-from runtime import AgentRuntime
+from engine.runtime import AgentRuntime
+from surfaces import cli, shell
 
 
 def _script_file(tmp_path: Path, payload) -> Path:
@@ -158,7 +157,7 @@ def test_repl_keeps_context_across_turns(tmp_path, sandbox) -> None:
     )
 
     assert code == cli.EXIT_OK
-    from runtime import AgentRuntime
+    from engine.runtime import AgentRuntime
 
     store = AgentRuntime().session("repl-test").store
     assert [record["content"] for record in store.by_role("user")] == ["第一个问题", "第二个问题"]
@@ -195,7 +194,7 @@ def test_default_policy_is_read_only(tmp_path, sandbox) -> None:
 
     assert code == cli.EXIT_OK
     assert not (sandbox / "x.txt").exists()
-    from runtime import AgentRuntime
+    from engine.runtime import AgentRuntime
 
     tool_records = AgentRuntime().session("cli").store.by_role("tool")
     assert "被拒绝" in tool_records[0]["content"]
@@ -327,7 +326,7 @@ def test_interactive_approval_refusal_leaves_no_trace(tmp_path, sandbox) -> None
 
     assert code == cli.EXIT_OK
     assert not (sandbox / "x.txt").exists()
-    from runtime import AgentRuntime
+    from engine.runtime import AgentRuntime
 
     tool_records = AgentRuntime().session("cli").store.by_role("tool")
     assert "被拒绝" in tool_records[0]["content"]
@@ -353,7 +352,7 @@ def test_non_interactive_denies_with_an_actionable_hint(tmp_path, sandbox) -> No
 
     assert code == cli.EXIT_OK
     assert not (sandbox / "x.txt").exists()
-    from runtime import AgentRuntime
+    from engine.runtime import AgentRuntime
 
     reason = AgentRuntime().session("cli").store.by_role("tool")[0]["content"]
     assert "非交互环境不会等待输入" in reason

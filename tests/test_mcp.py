@@ -14,9 +14,12 @@ import time
 
 import pytest
 
-import cli
-from agent import build_master, drive_session
-from mcp import (
+from engine.agent import build_master, drive_session
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from surfaces import cli
+from tools import ToolError
+from tools.mcp import (
     McpServer,
     connect,
     connect_all,
@@ -26,9 +29,6 @@ from mcp import (
     text_of_result,
     tool_descriptor_to_tool,
 )
-from model import ModelResponse, ScriptedClient, ToolCall
-from runtime import AgentRuntime
-from tools import ToolError
 
 FAKE_SERVER = """
 import json

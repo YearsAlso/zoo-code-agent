@@ -11,9 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import agent_events
-from agent import build_master, drive_session
-from model import (
+from engine.agent import build_master, drive_session
+from engine.runtime import AgentRuntime
+from kernel import agent_events
+from kernel.model import (
     ModelError,
     ModelResponse,
     ResponseDone,
@@ -23,8 +24,7 @@ from model import (
     ToolCall,
 )
 from providers import AnthropicClient, text_delta_of
-from render import AnsiRenderer, PlainRenderer, render_ops
-from runtime import AgentRuntime
+from surfaces.render import AnsiRenderer, PlainRenderer, render_ops
 
 SESSION = "streaming"
 
@@ -155,7 +155,7 @@ class _Truncated:
 
 def test_a_stream_without_a_final_response_raises_at_the_contract_level(sandbox) -> None:
     """静默当成空响应会让"流断了 / 脚本写漏"看起来像"模型没话说"。"""
-    from loop import _request_response, start_session
+    from engine.loop import _request_response, start_session
 
     runtime = AgentRuntime()
     runtime.configure(model=_Truncated(), root=sandbox, budget=1000)
@@ -185,7 +185,7 @@ def test_the_failure_is_recorded_as_data_not_swallowed(sandbox) -> None:
 
     模型可见的消息序列 MUST NOT 把这条记录当成对话内容（它不是谁说的话）。
     """
-    from loop import _messages
+    from engine.loop import _messages
 
     _drive(_Truncated(), sandbox=sandbox)
 
@@ -197,7 +197,7 @@ def test_the_failure_is_recorded_as_data_not_swallowed(sandbox) -> None:
 
 def test_a_failed_batch_task_reports_the_reason_instead_of_hanging(tmp_path) -> None:
     """批量派发：一条任务因为模型失败而终止时，结果里 MUST 带得出原因。"""
-    from dispatch import Task, dispatch_tasks
+    from engine.dispatch import Task, dispatch_tasks
 
     class _Broken:
         def complete(self, messages, tools):

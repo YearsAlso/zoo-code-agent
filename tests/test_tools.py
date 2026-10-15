@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from permissions import PermissionPolicy
+from kernel.permissions import PermissionPolicy
 from tools import (
     IdempotencyLedger,
     MissingDescription,

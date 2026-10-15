@@ -18,11 +18,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from agent import build_master, drive_session
-from loop import STOP_MODEL
-from model import ModelClient, ScriptedClient
-from permissions import PermissionPolicy
-from runtime import AgentRuntime, reset_all
+from engine.agent import build_master, drive_session
+from engine.loop import STOP_MODEL
+from engine.runtime import AgentRuntime, reset_all
+from kernel.model import ModelClient, ScriptedClient
+from kernel.permissions import PermissionPolicy
 
 from .tasks import TASKS, EvalTask, get_task
 

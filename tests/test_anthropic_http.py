@@ -16,11 +16,11 @@ pytest.importorskip("anthropic", reason="没装 anthropic SDK；装了它的环�
 
 from fake_provider import FakeProvider, failing, reply
 
-import cli
-from agent import build_master, drive_session
-from model import RateLimited, TextDelta, ToolCall, is_retryable
-from permissions import PermissionPolicy
-from runtime import AgentRuntime
+from engine.agent import build_master, drive_session
+from engine.runtime import AgentRuntime
+from kernel.model import RateLimited, TextDelta, ToolCall, is_retryable
+from kernel.permissions import PermissionPolicy
+from surfaces import cli
 
 
 def _loopback_bindable() -> bool:
@@ -82,7 +82,7 @@ def test_complete_round_trips_through_the_real_sdk(sdk_env) -> None:
 
 def test_the_anthropic_request_is_shaped_the_way_that_protocol_expects(sdk_env) -> None:
     """工具声明走 ``input_schema``、系统提示是独立参数——写错这两处不会报错，只会不听话。"""
-    from model import Message, ToolDeclaration
+    from kernel.model import Message, ToolDeclaration
 
     with FakeProvider([reply("好。")]) as provider:
         sdk_env(provider)
@@ -218,7 +218,7 @@ def test_the_classifier_covers_the_real_sdk_vocabulary() -> None:
     """
     import anthropic
 
-    from model import AuthError, BadRequestError, TransientError, is_retryable
+    from kernel.model import AuthError, BadRequestError, TransientError, is_retryable
     from providers import classify_anthropic_error
 
     expected = {
@@ -258,7 +258,7 @@ def test_the_classifier_leaves_only_the_truly_unknown_unmapped() -> None:
     """剩下的"认不出来"必须是一小撮**故意**不映射的：基类、形状校验、凭据文件之类。"""
     import anthropic
 
-    from model import ModelError
+    from kernel.model import ModelError
     from providers import classify_anthropic_error
 
     names = [name for name in dir(anthropic) if name.endswith("Error")]

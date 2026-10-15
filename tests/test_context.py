@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 
-from context import (
+from kernel.context import (
     COMPACT_CHAR_THRESHOLD,
     compact_view,
     compose_system_prompt,
@@ -172,14 +172,15 @@ def test_summary_handles_a_history_without_files_or_commands() -> None:
 
 def test_loop_uses_the_compacted_view(monkeypatch, sandbox) -> None:
     """集成点：循环确实按压缩后的视图请求模型，而存档记录保持完整。"""
-    import loop as loop_module
-    from agent import build_master, drive_session
-    from model import ModelResponse, ScriptedClient, ToolCall
-    from permissions import PermissionPolicy
-    from runtime import AgentRuntime
+    from engine.agent import build_master, drive_session
+    from engine.loop import session as loop_session
+    from engine.runtime import AgentRuntime
+    from kernel.model import ModelResponse, ScriptedClient, ToolCall
+    from kernel.permissions import PermissionPolicy
 
+    # `compact_view` 现在在 `engine.loop.session` 里被解析（循环里真正用它的是那一层）
     monkeypatch.setattr(
-        loop_module, "compact_view", functools.partial(compact_view, char_threshold=10)
+        loop_session, "compact_view", functools.partial(compact_view, char_threshold=10)
     )
 
     seen: list[int] = []

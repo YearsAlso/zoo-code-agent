@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from tui import (
+from surfaces.tui import (
     MAX_BODY_LINES,
     Approval,
     Banner,
@@ -238,10 +238,10 @@ def test_headless_app_runs_a_turn_and_shows_the_answer(sandbox) -> None:
     """
     pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
 
-    from agent import build_master
-    from model import ModelResponse, ScriptedClient
-    from permissions import PermissionPolicy
-    from tui_app import FullscreenApp
+    from engine.agent import build_master
+    from kernel.model import ModelResponse, ScriptedClient
+    from kernel.permissions import PermissionPolicy
+    from surfaces.tui_app import FullscreenApp
 
     app = FullscreenApp(
         session_id="tui-headless",
@@ -279,8 +279,8 @@ def test_headless_app_runs_a_turn_and_shows_the_answer(sandbox) -> None:
 def test_headless_app_quits_on_the_quit_key(sandbox) -> None:
     pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
 
-    from permissions import PermissionPolicy
-    from tui_app import FullscreenApp
+    from kernel.permissions import PermissionPolicy
+    from surfaces.tui_app import FullscreenApp
 
     app = FullscreenApp(
         session_id="tui-quit",

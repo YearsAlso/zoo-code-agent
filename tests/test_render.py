@@ -11,8 +11,8 @@ import json
 
 import pytest
 
-from model import ModelResponse, ScriptedClient
-from render import (
+from kernel.model import ModelResponse, ScriptedClient
+from surfaces.render import (
     KIND_NOTICE,
     KIND_RESULT,
     KIND_TEXT,

@@ -12,12 +12,12 @@ import json
 
 import pytest
 
-import cli
-from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
-from rpc import ProtocolError, encode_error, encode_response, parse_request
-from runtime import AgentRuntime
-from sdk import open_session, run_session
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from kernel.permissions import PermissionPolicy
+from surfaces import cli
+from surfaces.rpc import ProtocolError, encode_error, encode_response, parse_request
+from surfaces.sdk import open_session, run_session
 
 
 def _script(path, payload) -> str:
@@ -165,7 +165,7 @@ def test_rpc_continues_an_existing_session(tmp_path, sandbox) -> None:
         ),
     )
 
-    from runtime import AgentRuntime
+    from engine.runtime import AgentRuntime
 
     store = AgentRuntime().session("rpc-continue").store
     assert [item["content"] for item in store.by_role("user")] == ["第一件事", "第二件事"], (
@@ -210,10 +210,10 @@ def test_rpc_cancel_during_a_turn_ends_it_and_the_session_survives(sandbox) -> N
 
     这里直接构造服务端（而不是走命令行），因为要注入一个"第一轮就请求取消"的模型。
     """
-    from agent import build_master
-    from render import make_renderer
-    from rpc import RpcServer
-    from runtime import AgentRuntime
+    from engine.agent import build_master
+    from engine.runtime import AgentRuntime
+    from surfaces.render import make_renderer
+    from surfaces.rpc import RpcServer
 
     # 第一轮故意请求一个工具：否则模型一给正文就 `model_stopped` 了，取消根本没有边界可生效。
     inner = ScriptedClient(
@@ -347,7 +347,7 @@ def test_rpc_denies_writes_without_preauthorization(tmp_path, sandbox) -> None:
         ),
     )
 
-    from runtime import AgentRuntime
+    from engine.runtime import AgentRuntime
 
     assert not (sandbox / "x.txt").exists()
     record = AgentRuntime().session("rpc-deny").store.by_role("tool")[0]
@@ -461,7 +461,7 @@ def test_sdk_events_reach_the_callback(sandbox) -> None:
 
 def test_sdk_events_match_the_json_mode(sandbox) -> None:
     """同源证明的第二份：SDK 收到的也是**同一份**事件。"""
-    from render import JsonRenderer, make_renderer
+    from surfaces.render import JsonRenderer, make_renderer
 
     out = io.StringIO()
     cli.main(

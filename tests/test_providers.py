@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from model import (
+from kernel.model import (
     EXTRA_NAME,
     Message,
     ModelResponse,

@@ -12,9 +12,10 @@ import subprocess
 
 import pytest
 
-import cli
-from session import SessionStore
-from subagent import SubagentResult, Usage, parse_child_events, run_subagent, subagent_tool
+from engine.runtime import AgentRuntime
+from engine.subagent import SubagentResult, Usage, parse_child_events, run_subagent, subagent_tool
+from kernel.session import SessionStore
+from surfaces import cli
 
 
 def _events() -> list[str]:
@@ -350,7 +351,9 @@ def test_end_to_end_through_the_parent_cli(tmp_path, sandbox) -> None:
 
     assert code == cli.EXIT_OK
     # 子任务由父进程发起；父的观察里应当带上"结论 / 证据 / 用量"三样。
-    records = cli.AgentRuntime().session("cli").store.by_role("tool")
+    # 运行期住在 `engine.runtime`——`cli.AgentRuntime` 从来不是承诺过的公开面，
+    # 只是"碰巧被 import 进那个文件"，分层之后那个巧合没了。
+    records = AgentRuntime().session("cli").store.by_role("tool")
     assert records, "先断言非空"
     observation = records[0]["content"]
     assert "子任务失败" in observation or "结论：" in observation

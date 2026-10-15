@@ -11,8 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import cli
-from model import (
+from kernel.model import (
     AuthError,
     BadRequestError,
     Message,
@@ -26,7 +25,7 @@ from model import (
     TransientError,
     is_retryable,
 )
-from openai_compat import (
+from providers.openai_compat import (
     API_KEY_ENV,
     HttpRequest,
     OpenAICompatibleClient,
@@ -39,7 +38,8 @@ from openai_compat import (
     to_openai_messages,
     to_openai_tools,
 )
-from retry import retrying
+from providers.retry import retrying
+from surfaces import cli
 
 TOOLS = (
     ToolDeclaration(

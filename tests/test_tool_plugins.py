@@ -13,11 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
-import cli
-from agent import build_master, drive_session
-from loop import on_tool_call
-from model import ModelResponse, ScriptedClient, ToolCall
-from runtime import AgentRuntime
+from engine.agent import build_master, drive_session
+from engine.loop import on_tool_call
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from surfaces import cli
 from tools import (
     IdempotencyLedger,
     NameConflict,
@@ -61,7 +61,7 @@ def _dispatch(tool: Tool, sandbox, *, call_id: str = "c1") -> None:
     预授权的理由：这条用例关心的是**执行体失败之后会不会被重试**，不是权限门——
     门的事另有用例（`test_an_external_tool_goes_through_the_same_gate`）。
     """
-    from permissions import PermissionPolicy
+    from kernel.permissions import PermissionPolicy
 
     runtime = AgentRuntime()
     runtime.configure(
@@ -324,7 +324,9 @@ def test_external_tools_reach_the_system_prompt(sandbox, monkeypatch) -> None:
         def complete(self, messages, tools):
             return ModelResponse(text="好。")
 
-    monkeypatch.setattr(cli, "AnthropicClient", _FakeAnthropic)
+    from providers import select as select_module
+
+    monkeypatch.setattr(select_module, "AnthropicClient", _FakeAnthropic)
     args = SimpleNamespace(
         script=None,
         model=None,

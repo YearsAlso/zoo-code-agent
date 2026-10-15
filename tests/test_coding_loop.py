@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import sys
 
-from agent import build_master, drive_session
-from loop import STOP_MODEL
-from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
-from runtime import AgentRuntime
+from engine.agent import build_master, drive_session
+from engine.loop import STOP_MODEL
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from kernel.permissions import PermissionPolicy
 
 BROKEN = "def add(a, b):\n    return a - b\n"
 TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"

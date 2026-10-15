@@ -10,17 +10,17 @@ import json
 
 import pytest
 
-import cli
-from agent import build_master, drive_session
-from context import compact_view
-from loop import fork_session
-from model import ModelResponse, ScriptedClient
-from permissions import PermissionPolicy
-from prompting import StreamLineSource
-from render import AnsiRenderer
-from runtime import AgentRuntime
-from session import RECORDS_KEY, SessionStore, UnknownEntry
-from shell import Shell
+from engine.agent import build_master, drive_session
+from engine.loop import fork_session
+from engine.runtime import AgentRuntime
+from kernel.context import compact_view
+from kernel.model import ModelResponse, ScriptedClient
+from kernel.permissions import PermissionPolicy
+from kernel.prompting import StreamLineSource
+from kernel.session import RECORDS_KEY, SessionStore, UnknownEntry
+from surfaces import cli
+from surfaces.render import AnsiRenderer
+from surfaces.shell import Shell
 
 
 def _session(sandbox, session_id: str = "base", script=None) -> AgentRuntime:
@@ -43,7 +43,7 @@ def _two_turn_session(sandbox, session_id: str = "base") -> AgentRuntime:
     """一条真的走了两轮的会话（两轮才谈得上"从第 N 轮分叉"）。"""
     runtime = _session(sandbox, session_id, script=[ModelResponse(text="第一轮。")])
     AgentRuntime().reset()
-    from loop import continue_session
+    from engine.loop import continue_session
 
     continue_session(runtime, session_id, "第二件事")
     master = build_master(
@@ -143,7 +143,7 @@ def test_the_fork_continues_with_the_history_and_the_source_does_not(sandbox) ->
     # e1..e4 = 第一件事 / 第一轮 / 第二件事 / 第二轮：从 e3 分叉意味着"两轮都带上"。
     fork_session(runtime, source_id="base", entry_id="e3", target_id="branch")
     AgentRuntime().reset()
-    from loop import continue_session
+    from engine.loop import continue_session
 
     continue_session(runtime, "branch", "换一条路")
     master = build_master(

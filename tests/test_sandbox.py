@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-import sandbox
-from sandbox import (
+from kernel import sandbox
+from kernel.sandbox import (
     MODE_AUTO,
     MODE_NONE,
     MODE_STRICT,

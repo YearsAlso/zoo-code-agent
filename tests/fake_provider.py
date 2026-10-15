@@ -380,6 +380,29 @@ def failing(status: int, message: str = "出错了") -> dict[str, Any]:
     return {"status": status, "message": message}
 
 
+def steps_from_script(script: Sequence[Any]) -> list[dict[str, Any]]:
+    """把一份**脚本化计划**变成假 provider 的剧本。
+
+    存在的理由：基准（`src/evals/`）用脚本化计划描述"模型该做什么"，而这里要验证的是
+    "同一份计划经**真实 HTTP** 跑一遍会怎样"。把计划搬到线上，两步是同构的——
+    于是基准可以整条跑在本地假服务上。
+    """
+    return [
+        reply(
+            str(getattr(response, "text", "")),
+            tool_calls=[
+                {
+                    "id": call.call_id,
+                    "name": call.name,
+                    "arguments": dict(call.arguments),
+                }
+                for call in getattr(response, "tool_calls", ())
+            ],
+        )
+        for response in script
+    ]
+
+
 def all_lines(lines: Iterator[str]) -> list[str]:  # pragma: no cover - 调试用
     """把行迭代器收成列表（排错时方便看一眼）。"""
     return [line.rstrip("\n") for line in lines]

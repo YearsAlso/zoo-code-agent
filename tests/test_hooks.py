@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent import build_master, drive_session
-from hooks import Hooks, PreToolDecision
-from loop import STOP_MODEL, on_tool_call, run_turn, start_session
-from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
-from runtime import AgentRuntime, reset_all
+from engine.agent import build_master, drive_session
+from engine.loop import STOP_MODEL, on_tool_call, run_turn, start_session
+from engine.runtime import AgentRuntime, reset_all
+from kernel.hooks import Hooks, PreToolDecision
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from kernel.permissions import PermissionPolicy
 
 
 class _Request:

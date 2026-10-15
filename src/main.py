@@ -16,8 +16,8 @@ import sys
 
 from zoo_framework.core import Master
 
-import cli
 import conf.demo_conf  # noqa: F401  启动钩子：MUST 在 Master() 之前导入
+from surfaces import cli
 from workers.agent_worker import AgentWorker
 from workers.sample_worker import SampleWorker
 

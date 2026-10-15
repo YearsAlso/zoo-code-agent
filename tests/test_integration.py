@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from agent import build_master, drive_session
-from loop import STOP_MODEL
-from model import ModelResponse, ScriptedClient, ToolCall
-from permissions import PermissionPolicy
-from runtime import AgentRuntime
+from engine.agent import build_master, drive_session
+from engine.loop import STOP_MODEL
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, ScriptedClient, ToolCall
+from kernel.permissions import PermissionPolicy
 
 
 def test_scripted_session_runs_end_to_end_through_master(sandbox) -> None:

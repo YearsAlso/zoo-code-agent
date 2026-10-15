@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from runtime import AgentRuntime
-from session import SessionStore
+from engine.runtime import AgentRuntime
+from kernel.session import SessionStore
 from tools import idempotency_key
 
 

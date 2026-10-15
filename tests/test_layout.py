@@ -103,12 +103,23 @@ def _relative_imports(path: Path) -> list[str]:
 
 
 def test_engine_modules_never_use_relative_imports() -> None:
-    """引擎模块 MUST 只以顶层名字互导——相对导入只在 `src` 被当作包加载时成立。
+    """引擎模块 MUST 以包路径互导——相对导入只在 `src` 被当作包加载时成立。
 
     这条不是风格偏好：`python src/main.py -p "..."` 与 `--eval --real-provider` 两条文档
     承诺过的入口，都因为这一处栽过（实测 2026-10-14，见 `fix-entry-and-approval-preview`）。
+
+    扫描用 `rglob`：引擎代码收进分层包之后，`glob("*.py")` 只会看到 `main.py` 与 `__init__.py`，
+    这条检查会变成"永远通过"——那正是本仓库反复踩过的失效模式。
+
+    `src/evals/` 是唯一的例外：它是包，包内相对导入（`from .runner import`）是规格允许的，
+    跨到顶层的 `from ..x import` 由 `test_evals_package_never_imports_across_the_src_boundary` 单独守。
     """
-    offenders = [item for path in sorted(SRC.glob("*.py")) for item in _relative_imports(path)]
+    offenders = [
+        item
+        for path in sorted(SRC.rglob("*.py"))
+        if not path.is_relative_to(SRC / "evals")
+        for item in _relative_imports(path)
+    ]
 
     assert offenders == [], f"引擎模块出现相对导入：{offenders}"
 

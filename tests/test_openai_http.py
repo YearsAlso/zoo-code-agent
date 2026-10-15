@@ -14,13 +14,13 @@ import sys
 import pytest
 from fake_provider import FakeProvider, failing, reply
 
-import cli
-from agent import build_master, drive_session
-from model import ModelResponse, RateLimited, TextDelta, ToolCall, is_retryable
-from openai_compat import OpenAICompatibleClient
-from permissions import PermissionPolicy
-from retry import retrying
-from runtime import AgentRuntime
+from engine.agent import build_master, drive_session
+from engine.runtime import AgentRuntime
+from kernel.model import ModelResponse, RateLimited, TextDelta, ToolCall, is_retryable
+from kernel.permissions import PermissionPolicy
+from providers.openai_compat import OpenAICompatibleClient
+from providers.retry import retrying
+from surfaces import cli
 
 
 def _loopback_bindable() -> bool:
@@ -77,7 +77,7 @@ def test_complete_round_trips_over_real_http() -> None:
 
 def test_the_request_is_shaped_the_way_the_protocol_expects() -> None:
     """请求发成什么样也要断言：发错了不会报错，只会让模型不听话。"""
-    from model import Message, ToolDeclaration
+    from kernel.model import Message, ToolDeclaration
 
     with FakeProvider([reply("好。")]) as provider:
         tools = (ToolDeclaration("read_file", "读文件", {"type": "object", "properties": {}}),)
@@ -145,7 +145,7 @@ def test_the_retry_layer_turns_a_rate_limit_into_a_success() -> None:
 
 def test_a_client_error_is_not_retried() -> None:
     """参数错重试必然再失败——分类说它不可重试，那就一次都不该多打。"""
-    from model import BadRequestError
+    from kernel.model import BadRequestError
 
     with FakeProvider([failing(400, "模型名写错了")]) as provider, pytest.raises(BadRequestError):
         _client(provider).complete([], ())

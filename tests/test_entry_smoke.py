@@ -120,3 +120,28 @@ def test_scripted_runs_still_work_end_to_end(tmp_path: Path) -> None:
 
     assert result.returncode == 0, _combined(result)
     assert "list_dir" in _combined(result)
+
+
+def test_the_entry_is_importable_as_a_package() -> None:
+    """第二条进入路径：把仓库当包导入（`import src.main`）时，分层包 MUST 仍然解析得到。
+
+    这是 `src/__init__.py` 那个 `sys.path` 桥接存在的唯一理由，而它以前只有一条**检查字符串**的
+    用例守着——那种用例不构成"这条路能跑"的证据。引擎从平铺模块收进分层包之后，
+    靠的正是同一条桥：`from engine.agent import ...` 与 `from kernel.model import ...`
+    在包形态下 MUST NOT 变成 `ModuleNotFoundError`。
+    """
+    result = _run(
+        [
+            sys.executable,
+            "-c",
+            "import src.main; from engine import agent; from kernel import model;"
+            " from surfaces import cli; print('ok')",
+        ],
+        cwd=REPO_ROOT,
+    )
+
+    output = _combined(result)
+
+    assert result.returncode == 0, f"以包导入时解析失败：\n{output}"
+    assert "ModuleNotFoundError" not in output, output
+    assert "ok" in output

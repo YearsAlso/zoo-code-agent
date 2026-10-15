@@ -9,8 +9,11 @@
 工具调用经框架事件管道派发，会话记录与幂等账本落盘，**进程重启后可续跑**。
 
 **布局是标准脚手架形态**：`src/` 即项目根，`src/main.py` 是入口，
-`src/{workers,conf,params,events}/` 对应框架的四个扩展点；引擎各模块平铺在 `src/` 下，
-导入一律按顶层模块写（`from agent import ...`，不是 `from zoo_code_agent...`）。
+`src/{workers,conf,params,events}/` 对应框架的四个扩展点；引擎收在五个分层包里
+（`kernel` 契约 / `providers` 传输 / `tools` 工具 / `engine` 运行期 / `surfaces` 界面），
+导入写包路径（`from engine.agent import ...`，不是 `from zoo_code_agent...`）。
+**层与层之间的方向由 `tests/test_architecture.py` 守着**——跨层只允许向下、图 MUST 无环
+（函数体内的延迟导入也算边）、单个文件 MUST ≤ 400 行。加模块时要把它登记进那张分层表。
 改 `src/main.py` 时 MUST NOT 删除 `# zfc:worker-imports` / `# zfc:worker-registrations` 两个标记。
 
 ## 硬约定

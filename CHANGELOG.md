@@ -12,9 +12,9 @@
 
 ## [0.0.1] — 2026-10-14
 
-首个可用版本。**31 个变更**全部交付并归档（`openspec/changes/archive/`），
+首个可用版本。**34 个变更**全部交付并归档（`openspec/changes/archive/`），
 delta 合并为 **23 份能力规格**（`openspec/specs/`，权威行为规格）；
-**460 条用例**全绿，且**不需要任何模型 API 密钥**——脚本化模型是一等公民。
+**475 条用例**全绿，且**不需要任何模型 API 密钥**——脚本化模型是一等公民。
 
 ### 新增
 
@@ -46,6 +46,14 @@ delta 合并为 **23 份能力规格**（`openspec/specs/`，权威行为规格�
 - **OpenAI 兼容路径的真实 HTTP 验证**：本地假 provider 端到端（整条 + 流式 + 错误码）（`verify-openai-http-path`）
 - **全屏界面**：`--tui`（Textual 可选依赖）；状态是纯归约，界面行为无需终端即可断言（`add-fullscreen-tui`）
 - **发布与版本**：版本号单一真源、`zca --version`、变更日志、tag 驱动发布（`add-release-and-version`）
+- **分层不变量**：依赖方向、无环（**含函数体内的延迟导入**）与单文件行数棘轮各有一条测试守着；
+  顺带解掉唯一的环——拆出 `tui_state`，而 `tests/test_tui.py` 一行没改（`add-layering-invariants`）
+- **引擎分成五层**：`kernel` / `providers` / `tools` / `engine` / `surfaces`——`src/` 根下
+  只剩入口与安装态桥接；搬运过程中暴露并修掉一处只有搬动才会现形的脆性
+  （`subagent.py` 按 `__file__` 找入口）（`restructure-engine-into-layers`）
+- **上帝模块拆完**：六个超过 400 行的文件（824–421 行）拆成各自职责单一的模块，
+  行数白名单清空；`from tools import Tool` 这类既有写法一字未改
+  （`split-god-modules`）
 
 ### 修复
 

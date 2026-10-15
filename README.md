@@ -23,7 +23,7 @@ edits them and runs your tests, with a permission gate in front of every write.
 ## What this is
 
 **Small is the design, not the maturity.** Everything this agent does is pinned by a spec under
-[`openspec/specs/`](openspec/specs/) and covered by tests (460 cases); a
+[`openspec/specs/`](openspec/specs/) and covered by tests (475 cases); a
 [task-level benchmark](#task-level-benchmark-what-it-can-do-in-numbers) reports what it can and
 cannot do — **including the runs where it fails**. Keeping it small is what lets you read the whole
 thing before you point it at your repository.
@@ -36,7 +36,9 @@ thing before you point it at your repository.
   trusted environment).
 - **The layout is a standard scaffold project.** `src/` is the project root, `src/main.py` is the
   entry point, and `src/{workers,conf,params,events}/` are the framework's four extension points —
-  `zfc --worker` works inside this repository as-is.
+  `zfc --worker` works inside this repository as-is. The engine is grouped into **five layers**
+  under `kernel/` `providers/` `tools/` `engine/` `surfaces/`, and dependency direction, acyclicity
+  and per-file size are guarded by `tests/test_architecture.py` (see [Layout](#layout)).
 - **It is not part of the framework.** It only depends on the released `zoo-framework`
   (`>=0.12,<0.13` from PyPI) and does not modify it.
 - **It also validates the framework** — it is the first real consumer of the framework's agent story
@@ -54,17 +56,27 @@ src/
 ├── conf/demo_conf.py       @configure — startup hook
 ├── params/demo_params.py   @params — binds config.json values to class attributes
 ├── events/demo_event.py    @event — event reactor
-├── agent.py  loop.py  model.py  providers.py  permissions.py
-├── runtime.py  session.py  tools.py  context.py  cli.py
+├── kernel/                 ① Contracts: depends on no other engine module
+│   model.py permissions.py agent_events.py hooks.py session.py
+│   context.py prompting.py skills.py sandbox.py version.py
+├── providers/              ② Transport: how a model is called, classified, retried
+├── tools/                  ③ Tools: contract, registry, built-ins, plugins, MCP
+├── engine/                 ④ Runtime: session state, the loop, dispatch, agent wiring, subagents
+├── surfaces/               ⑤ Surfaces: cli / shell / render / tui / rpc / sdk
 └── evals/                  Task-level benchmark
 ```
+
+**The dependency direction is guarded by a test** (`tests/test_architecture.py`): layers point
+downwards only, the graph must be acyclic (**deferred imports count**), and every file is under a
+line-count ratchet. That test is also what makes this section of the README a claim rather than
+decoration.
 
 ## Quick start
 
 ```bash
 pip install -e ".[dev]"     # no real model SDK included
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # try it without cloning (0.0.1 today)
-pytest                      # 460 cases, none of which need an API key
+pytest                      # 475 cases, none of which need an API key
 python src/main.py          # start the scheduler and run the example workers (Ctrl-C to stop)
 python src/main.py -p "list the current directory" --script examples/smoke.json --allow list_dir   # key-free session
 ```
@@ -85,14 +97,14 @@ python src/main.py -i       # interactive session
 ```
 
 Or use the engine's library API directly — in a scaffold layout `src/` is on the path, so the
-modules are top-level:
+five layer packages are themselves top-level:
 
 ```python
 import sys
 
 sys.path.insert(0, "src")
 
-from agent import build_master, drive_session
+from engine.agent import build_master, drive_session
 from providers import AnthropicClient
 
 master = build_master(
@@ -256,7 +268,7 @@ The permission gate answers *whether* a call may run; a `pre_tool` hook answers 
 first, so a hook can never overturn its refusal. `post_tool` / `on_stop` are observe-only.
 
 ```python
-from hooks import Hooks, PreToolDecision
+from kernel.hooks import Hooks, PreToolDecision
 
 def block_migrations(name, arguments):
     if str(arguments.get("path", "")).startswith("migrations/"):
@@ -351,7 +363,8 @@ the whole batch would sit until its timeout.
 ```bash
 python src/main.py --eval                            # all tasks, scripted model, no key
 python src/main.py --eval --task bugfix-01 --repeats 3
-python src/main.py --eval --real-provider            # real model (needs an API key)
+python src/main.py --eval --real-provider            # real model: Anthropic (needs ANTHROPIC_API_KEY)
+python src/main.py --eval --real-provider --provider openai --base-url https://your-endpoint/v1 --model <id>   # or any OpenAI-compatible endpoint
 ```
 
 Three tasks cover three kinds of change: fix a bug (`bugfix-01`), implement a stub (`feature-01`),
@@ -370,6 +383,18 @@ failure**.
 > latency); the raw JSON is [`bench/results/eval-scripted.json`](bench/results/eval-scripted.json).
 > **Success rate with a real model has not been measured** — that needs an API key and is recorded
 > separately.
+
+**How to fill that row in** (the wiring is in place; only the key is missing):
+
+1. either provider works: `--eval --real-provider` (Anthropic) or
+   `--eval --real-provider --provider openai --base-url <endpoint>/v1 --model <id>`;
+2. use `--repeats N` with N >= 3 (one run's luck should not become a conclusion) and a different
+   `--out` path, so the scripted baseline is not overwritten;
+3. **list the failures too** — they carry more information than the success rate — and give a token
+   cost magnitude;
+4. this path is already verified end to end against a local fake server (all three tasks, both
+   provider paths, and a broken provider still failing the benchmark), so anything that goes wrong
+   while filling in numbers will be on the key or the vendor-behaviour side.
 
 ### What it can and cannot do (honestly)
 
@@ -479,10 +504,10 @@ session both ways and asserting the event sequences match.
 printf '%s\n' '{"id":1,"method":"prompt","text":"list the files"}' '{"id":2,"method":"stop"}' | zca --rpc
 ```
 
-For Python in the same process there is `src/sdk.py`:
+For Python in the same process there is `src/surfaces/sdk.py`:
 
 ```python
-from sdk import open_session
+from surfaces.sdk import open_session
 
 session = open_session(model=my_client, root=".", session_id="embed")
 print(session.send("list the files")["stop_reason"])
@@ -593,7 +618,7 @@ rule warns about (that file lives in the framework repository, not in this one).
 
 ## Status
 
-All 31 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
+All 34 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
 merged into the 23 capability specs under [`openspec/specs/`](openspec/specs/) — those are the
 authoritative behaviour specs.
 
@@ -623,12 +648,19 @@ authoritative behaviour specs.
 | `add-shell-sandbox` | A real boundary for `run_shell` (sandbox-exec / bwrap, three tiers via `--sandbox`); availability proven by actually applying it; writes confined to the root; the boundary is reported every session | `shell-sandbox` / `coding-tools` / `cli-interface` |
 | `add-session-fork` | Stable addresses for session records; `--fork session:entry` branches without touching the original (ledger and accounting come along, in-flight state does not); folded summaries name the entries they cover | `session-fork` / `session-persistence` / `context-engineering` / `cli-interface` |
 | `add-subagents` | `--subagent`: one task per process, isolated state via a temporary cwd, only conclusion + evidence + usage come back, failures arrive as observations; the design also states what is *not* done (shared budget pool → framework #248) | `subagent` / `cli-interface` |
-| `add-rpc-and-sdk` | `--rpc` (JSONL over stdio) and `src/sdk.py` for embedding — both only assemble existing pieces, so the event schema is literally the `--json` one; approvals fail closed | `rpc-and-sdk` / `cli-interface` |
+| `add-rpc-and-sdk` | `--rpc` (JSONL over stdio) and `src/surfaces/sdk.py` for embedding — both only assemble existing pieces, so the event schema is literally the `--json` one; approvals fail closed | `rpc-and-sdk` / `cli-interface` |
 | `add-fullscreen-tui` | `--tui`: the same session with a shape on screen — state is a pure reduction (so screen behaviour is asserted without a terminal), and the Textual layer is thin enough for headless tests | `fullscreen-tui` / `interactive-shell` |
 | `add-release-and-version` | One source for the version (`zca --version`), a real CHANGELOG, and a tag-driven release that refuses mismatched tags, builds, installs what it built, and publishes via trusted publishing | `release-and-version` |
+| `fix-doc-drift` | Documentation drift: the case count, spec count and archived-change count were all wrong; they are now invariants guarded by three tests that **read the actual value and compare** (copying the number into a test is not guarding it) | `documentation-accuracy` |
+| `verify-anthropic-http-path` | The Anthropic path verified against a real SDK and a local server speaking the Messages protocol; also fixed "a missing key only fails at the first request" | `model-client` |
+| `verify-openai-http-path` | The OpenAI-compatible path verified end to end against a local fake provider (whole response, streaming, and error codes) | `model-client` |
+| `harden-taxonomy-and-cleanup` | Error classification now covers the real SDK's vocabulary (Overloaded / Deadline / Retryable …); a subagent is reaped when the parent is interrupted | `model-client` / `subagent` |
+| `add-layering-invariants` | Layering as executable assertions rather than directory shape: one-way dependencies, an acyclic graph (**deferred imports included**), and a per-file line-count ratchet; it also removed the only cycle by extracting `tui_state` while `tests/test_tui.py` stayed untouched | `project-layout` |
+| `restructure-engine-into-layers` | The engine is now five layer packages (`kernel` / `providers` / `tools` / `engine` / `surfaces`) with only the entry point and the install-time bridge left at the `src/` root; `from tools import Tool` is untouched **for plugin authors**, and the only test-file changes are import paths (no assertion changed) | `project-layout` |
+| `split-god-modules` | The six over-budget files (824–421 lines) are split under 400 lines each and the whitelist is empty; **no test assertion changed** — the only exceptions are four monkeypatch targets that moved with the implementation, plus one real regression an existing test caught immediately | `project-layout` |
 
-- Tests: **460 cases** green, `ruff` clean; `openspec list` shows no active change and all 23
-  baseline specs pass `--strict`.
+- Tests: **475 cases** green, `ruff` clean; `openspec list` shows no active change and
+  all 23 baseline specs pass `--strict`.
 - Base: `zoo-framework>=0.12,<0.13`, `requires-python>=3.11`.
 - What's next: [ROADMAP.md](ROADMAP.md) (中文) — Now / Next / Later, each with a verifiable
   completion criterion.

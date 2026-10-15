@@ -23,7 +23,7 @@
 ## 定位
 
 **小是设计，不是成熟度。** 它能做的每件事都有 [`openspec/specs/`](openspec/specs/) 下的规格钉着、
-有 460 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
+有 475 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
 **包括它失败的那些运行**。做小，是为了让你在把它指向自己的仓库之前，能把它整个读完。
 
 - **是真的 agent，不是草图**：读文件、改代码、跑测试；会话跨进程重启能续跑；退出码说明它为什么停下来
@@ -32,6 +32,8 @@
   （`--allow`、审批回调，或可信环境下的 `--approve-all`）。
 - **布局是标准脚手架形态**：`src/` 即项目根，`src/main.py` 是入口，
   `src/{workers,conf,params,events}/` 对应框架的四个扩展点——`zfc --worker` 在本仓库里直接可用。
+  引擎按**五层**收在 `kernel/` `providers/` `tools/` `engine/` `surfaces/` 里，
+  依赖方向、无环与单文件行数由 `tests/test_architecture.py` 守着（见「结构」一节）。
 - **不是框架的一部分**：本仓库只依赖 PyPI 上已发布的 `zoo-framework`（当前 `>=0.12,<0.13`），不修改框架。
 - **它同时也在验证框架**：作为框架「Agent 线」（zoo-framework issue #32）的第一个真实消费方，
   跑出的缺口已登记为框架 issue（见[四个实测发现](#四个实测发现含后续状态)）。
@@ -47,17 +49,26 @@ src/
 ├── conf/demo_conf.py       @configure —— 启动钩子
 ├── params/demo_params.py   @params —— 把 config.json 的值绑到类属性
 ├── events/demo_event.py    @event —— 事件反应器
-├── agent.py  loop.py  model.py  providers.py  permissions.py
-├── runtime.py  session.py  tools.py  context.py  cli.py
+├── kernel/                 ① 契约层：不依赖任何其它引擎模块
+│   model.py permissions.py agent_events.py hooks.py session.py
+│   context.py prompting.py skills.py sandbox.py version.py
+├── providers/              ② 传输层：怎么调模型、失败怎么分类、重试怎么退避
+├── tools/                  ③ 工具层：契约、注册表、内建工具、插件、MCP
+├── engine/                 ④ 运行期层：会话状态、循环、派发、agent 装配、子 agent
+├── surfaces/               ⑤ 界面层：cli / shell / render / tui / rpc / sdk
 └── evals/                  任务级基准
 ```
+
+**依赖方向由测试守着**（`tests/test_architecture.py`）：跨层只允许向下，
+图 MUST 无环（**函数体内的延迟导入也算**），单个文件的行数受棘轮约束。
+它同时是 README 里"结构"这一节的判据——目录好看不算数，断言通过才算。
 
 ## 快速开始
 
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # 免 clone 跑一下（现在是 0.0.1）
-pytest                      # 460 用例，全部不需要 API 密钥
+pytest                      # 475 用例，全部不需要 API 密钥
 python src/main.py          # 起调度器跑示例 Worker（Ctrl-C 停止）
 python src/main.py -p "看看目录" --script examples/smoke.json --allow list_dir   # 零密钥会话
 ```
@@ -76,14 +87,14 @@ pip install -e ".[dev,anthropic]"
 python src/main.py -i       # 交互式会话
 ```
 
-也可以直接用引擎的库 API（脚手架布局里 `src/` 在路径上，模块是顶层模块）：
+也可以直接用引擎的库 API（脚手架布局里 `src/` 在路径上，五个分层包就是顶层包）：
 
 ```python
 import sys
 
 sys.path.insert(0, "src")
 
-from agent import build_master, drive_session
+from engine.agent import build_master, drive_session
 from providers import AnthropicClient
 
 master = build_master(
@@ -220,7 +231,7 @@ python src/main.py --eval                                          # 任务级�
 `post_tool` / `on_stop` 只观察。
 
 ```python
-from hooks import Hooks, PreToolDecision
+from kernel.hooks import Hooks, PreToolDecision
 
 def block_migrations(name, arguments):
     if str(arguments.get("path", "")).startswith("migrations/"):
@@ -305,7 +316,8 @@ python src/main.py --tasks tasks.txt --concurrency 2 --allow read_file,edit_file
 ```bash
 python src/main.py --eval                            # 全部任务，脚本化模型，零密钥
 python src/main.py --eval --task bugfix-01 --repeats 3
-python src/main.py --eval --real-provider            # 真实模型（需要 API 密钥）
+python src/main.py --eval --real-provider            # 真实模型：Anthropic（需要 ANTHROPIC_API_KEY）
+python src/main.py --eval --real-provider --provider openai --base-url https://你的端点/v1 --model <模型 id>   # 或任意 OpenAI 兼容端点
 ```
 
 三个任务覆盖三类改动：修 bug（`bugfix-01`）、补实现（`feature-01`）、修空输入边界
@@ -322,6 +334,16 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 > 数字来自 2026-10-12 本机一次运行（Windows / Python 3.13，脚本化模型，不含网络延迟）；
 > 原始 JSON 在 [`bench/results/eval-scripted.json`](bench/results/eval-scripted.json)。
 > 真实模型下的成功率**尚未测量**——那需要 API 密钥，另行记录。
+
+**怎么把真实模型那一行补上**（接线已经就绪，只差密钥）：
+
+1. 两条提供方路径都支持，任选其一：
+   `--eval --real-provider`（Anthropic）或
+   `--eval --real-provider --provider openai --base-url <端点>/v1 --model <模型 id>`；
+2. `--repeats N` 建议 ≥ 3（单次运气不该写进结论）；结果 JSON 换一个 `--out` 路径，别覆盖脚本化那份；
+3. 记录时**失败案例也要列出来**（失败比成功率更有信息量），并给出 token 成本量级；
+4. 这条路已经用**本地假服务**端到端验过（含三个任务、两条提供方路径与"坏提供方照样判失败"），
+   所以补数字时出问题只会在密钥或厂商行为那一侧。
 
 ### 能做 / 不能做（如实）
 
@@ -413,10 +435,10 @@ python src/main.py --eval --real-provider            # 真实模型（需要 API
 printf '%s\n' '{"id":1,"method":"prompt","text":"列出文件"}' '{"id":2,"method":"stop"}' | zca --rpc
 ```
 
-同进程的 Python 用 `src/sdk.py`：
+同进程的 Python 用 `src/surfaces/sdk.py`：
 
 ```python
-from sdk import open_session
+from surfaces.sdk import open_session
 
 session = open_session(model=my_client, root=".", session_id="embed")
 print(session.send("列出文件")["stop_reason"])
@@ -514,7 +536,7 @@ session.close()
 
 ## 状态
 
-31 个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
+34 个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
 [`openspec/specs/`](openspec/specs/) 下的 23 份能力规格——那才是权威行为规格。
 
 | 变更 | 交付 | 对应能力 |
@@ -543,11 +565,18 @@ session.close()
 | `add-shell-sandbox` | `run_shell` 的真实边界（sandbox-exec / bwrap，`--sandbox` 三档）；可用性以"真应用一次"为准；写限制在根目录内；每场会话都报出当前边界 | `shell-sandbox` / `coding-tools` / `cli-interface` |
 | `add-session-fork` | 会话记录的稳定地址；`--fork 会话:条目` 分叉而不动原会话（账本与记账随行，在飞状态不带）；折叠摘要写明它覆盖了哪些条目 | `session-fork` / `session-persistence` / `context-engineering` / `cli-interface` |
 | `add-subagents` | `--subagent`：一个子任务一个进程，cwd 隔离状态，只回"结论 + 证据 + 用量"，失败是一条观察；设计里同时写明**没做**什么（共享预算池 → 框架 #248） | `subagent` / `cli-interface` |
-| `add-rpc-and-sdk` | `--rpc`（JSONL over stdio）与 `src/sdk.py` 嵌入式用法——两者都只做装配，事件 schema 就是 `--json` 那一份；审批失败关闭 | `rpc-and-sdk` / `cli-interface` |
+| `add-rpc-and-sdk` | `--rpc`（JSONL over stdio）与 `src/surfaces/sdk.py` 嵌入式用法——两者都只做装配，事件 schema 就是 `--json` 那一份；审批失败关闭 | `rpc-and-sdk` / `cli-interface` |
 | `add-fullscreen-tui` | `--tui`：同一条会话在屏幕上有了形状——状态是纯归约（于是界面行为不需要终端就能断言），Textual 那层薄到可以用无头用例驱动 | `fullscreen-tui` / `interactive-shell` |
 | `add-release-and-version` | 版本号单一真源（`zca --version`）、真变更日志、tag 驱动发布（拒绝标签与版本不一致、构建、把刚构建的包装上再冒烟、trusted publishing 无长期 token） | `release-and-version` |
+| `fix-doc-drift` | 文档数字漂移：用例数、规格数、归档变更数三处失真，现在是三条**读实测值再比对**的用例守住的不变量（把数字抄进测试不算守住） | `documentation-accuracy` |
+| `verify-anthropic-http-path` | Anthropic 路径的真实 HTTP 验证：真 SDK + 本地说 Messages 协议的假服务；并修掉"缺密钥要等到第一次请求才失败" | `model-client` |
+| `verify-openai-http-path` | OpenAI 兼容路径的真实 HTTP 验证：本地假 provider 端到端（整条 + 流式 + 错误码） | `model-client` |
+| `harden-taxonomy-and-cleanup` | 错误分类覆盖真实 SDK 的词汇表（Overloaded / Deadline / Retryable …）；父进程被打断时回收子 agent | `model-client` / `subagent` |
+| `add-layering-invariants` | 分层不是目录形状，是可执行的断言：依赖方向单向、图无环（**含函数体内的延迟导入**）、单文件行数棘轮；顺带解掉唯一那个环（拆出 `tui_state`，而 `tests/test_tui.py` 一行没改） | `project-layout` |
+| `restructure-engine-into-layers` | 引擎收成五层包（`kernel` / `providers` / `tools` / `engine` / `surfaces`），`src/` 根下只剩入口与桥接；`from tools import Tool` 对**插件作者**一字未改，测试文件的改动只有导入路径（断言一行未动） | `project-layout` |
+| `split-god-modules` | 六个超限文件（824–421 行）拆到 400 行以内、白名单清空；**测试文件的断言一行未改**，唯一的例外是四处 monkeypatch 的注入目标随实现移动——外加一处真实回归被既有用例当场抓住 | `project-layout` |
 
-- 测试：**460 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，23 份基线规格 `--strict` 校验通过。
+- 测试：**475 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，23 份基线规格 `--strict` 校验通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 - 下一步：[ROADMAP.md](ROADMAP.md)——Now / Next / Later 三档，每条都带可验证的完成判据。
 

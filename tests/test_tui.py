@@ -18,6 +18,7 @@ from surfaces.tui import (
     History,
     TuiState,
     apply_event,
+    command_matches,
     fold_events,
     hint_line,
     render_lines,
@@ -293,6 +294,26 @@ def test_history_ignores_blank_submissions() -> None:
     assert history.entries == []
 
 
+# ---- B4 · 命令候选（纯投影） ---------------------------------------------------
+
+
+def test_command_candidates_are_a_pure_projection() -> None:
+    """候选只由"输入框里写了什么"决定——不碰终端、也不认识命令注册表。
+
+    不认识注册表是刻意的：本模块是 L0、命令层是 L1，直接 import 就是向上依赖。
+    候选列表由界面层传进来，于是筛选规则本身在哪儿都能断言。
+    """
+    candidates = (("/help", "看这份列表"), ("/cost", "看账"), ("/allow", "放行"))
+
+    assert command_matches("", candidates) == (), "普通输入不该弹菜单"
+    assert command_matches("看看目录", candidates) == ()
+    assert command_matches("/", candidates) == ("/help", "/cost", "/allow"), "只敲斜杠给全部"
+    assert command_matches("/co", candidates) == ("/cost",)
+    assert command_matches("/zzz", candidates) == ()
+    assert command_matches("/allow", candidates) == ("/allow",)
+    assert command_matches("/allow write_file", candidates) == (), "开始写参数就收起菜单"
+
+
 # ---- C · 缺依赖时的降级 ---------------------------------------------------------
 
 
@@ -447,5 +468,84 @@ def test_headless_up_arrow_recalls_history(sandbox) -> None:
 
             await pilot.press("down")
             assert prompt.value == "我正在写", "下键回到草稿"
+
+    asyncio.run(drive())
+
+
+def test_headless_menu_shows_commands_while_typing(sandbox) -> None:
+    """输入栏的内容随你敲什么变：敲 `/` 列出命令，继续敲就过滤，下键把选中项填进输入框。"""
+    pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
+
+    from textual.widgets import Input
+
+    app = _view_app(sandbox)
+
+    async def drive() -> None:
+        async with app.run_test() as pilot:
+            prompt = app.query_one("#prompt", Input)
+
+            prompt.value = "/"
+            await pilot.pause()
+            menu = str(app.query_one("#menu").render())
+            assert "/help" in menu and "/cost" in menu
+
+            prompt.value = "/al"
+            await pilot.pause()
+            filtered = str(app.query_one("#menu").render())
+            assert "/allow" in filtered and "/cost" not in filtered
+
+            await pilot.press("down")
+            assert prompt.value == "/allow ", "选中项要落进输入框，并留出补参数的位置"
+            assert str(app.query_one("#menu").render()).strip() == "", "开始写参数就收起菜单"
+
+            prompt.value = "看看目录"
+            await pilot.pause()
+            assert str(app.query_one("#menu").render()).strip() == "", "普通输入不弹菜单"
+
+    asyncio.run(drive())
+
+
+def test_headless_slash_command_runs_instead_of_being_sent_to_the_model(sandbox) -> None:
+    """回车执行命令，MUST NOT 把它当提示发给模型——两条显示路径要同一套解释。"""
+    pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
+
+    from textual.widgets import Input
+
+    app = _view_app(sandbox)
+
+    async def drive() -> None:
+        async with app.run_test() as pilot:
+            prompt = app.query_one("#prompt", Input)
+            prompt.value = "/cost"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            body = "\n".join(app.state.body)
+            assert "tokens" in body, "命令的结果要看得见"
+            assert app.state.turns == 0, "命令不是一轮会话"
+            assert not any(line.startswith("> /cost") for line in app.state.body), (
+                "MUST NOT 回显成提示"
+            )
+
+    asyncio.run(drive())
+
+
+def test_headless_unavailable_command_says_where_to_use_it(sandbox) -> None:
+    """界面跑不了的命令**明说**去哪儿用——列一个点下去没反应的命令就是撒谎。"""
+    pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
+
+    from textual.widgets import Input
+
+    app = _view_app(sandbox)
+
+    async def drive() -> None:
+        async with app.run_test() as pilot:
+            prompt = app.query_one("#prompt", Input)
+            prompt.value = "/sessions"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert "逐行外壳" in "\n".join(app.state.body)
+            assert "/sessions" not in app._menu, "跑不了的命令 MUST NOT 出现在候选里"
 
     asyncio.run(drive())

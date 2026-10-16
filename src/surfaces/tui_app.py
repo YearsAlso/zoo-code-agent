@@ -15,12 +15,17 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 from kernel import agent_events
+from surfaces.commands import is_command
+from surfaces.tui_commands import TUI_COMMANDS, CommandHost
+from surfaces.tui_commands import run as run_command
 from surfaces.tui_state import (
     Banner,
     History,
     TuiState,
     apply_event,
+    command_matches,
     hint_line,
+    note,
     render_lines,
     status_line,
 )
@@ -64,6 +69,9 @@ class FullscreenApp(App):
 
     /* 键位常驻在输入区正下方——敲到一半才需要它。 */
     #hint { height: 1; padding: 0 2; color: $text-muted; }
+
+    /* 命令候选：只在输入以 `/` 开头时占位（空串时高度自动为 0，不占地方）。 */
+    #menu { height: auto; max-height: 8; padding: 0 2; color: $text-muted; }
     """
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
@@ -105,6 +113,8 @@ class FullscreenApp(App):
         self._toolset = tuple(toolset)
         self._master: Any = None
         self._history = History()
+        self._menu: tuple[str, ...] = ()
+        self._menu_index = 0
         # 名字刻意避开了 `_running` 这类通用词：Textual 的 App 自己也用它们，
         # 而且是在 __init__ **之后**赋值——重名会被它悄悄覆盖掉（这条是无头用例抓出来的）。
         self._busy = threading.Event()
@@ -121,7 +131,8 @@ class FullscreenApp(App):
             yield Static("❯", id="prompt-mark")
             # 占位符只说明"这里能打字"：键位在下面的提示行里常驻，
             # 塞进占位符等于在按下第一个字符时就把它弄丢。
-            yield Input(placeholder="说点什么…", id="prompt")
+            yield Input(placeholder="输入任务；/ 看命令，↑↓ 翻历史", id="prompt")
+        yield Static("", id="menu")
         yield Static("", id="hint")
         yield Footer()
 
@@ -191,15 +202,70 @@ class FullscreenApp(App):
     # ---- 输入 ---------------------------------------------------------------
 
     def on_input_submitted(self, message: Any) -> None:
-        """回车提交一轮：把会话推进**放到 worker 线程**，界面照常响应。"""
+        """回车：是一行命令就执行它，否则把会话推进**放到 worker 线程**。"""
         text = str(message.value).strip()
         if not text or self._busy.is_set():
             return
-        self._history.push(text)
         message.input.value = ""
+        self._refresh_menu()
+        if is_command(text):
+            # **MUST NOT 发给模型**：同一行输入在两条显示路径下要得到同一种解释。
+            self._run_command(text)
+            return
+        self._history.push(text)
         self.state = apply_event(self.state, {"type": "user_prompt", "text": text})
         self._refresh()
         self.run_worker(lambda: self._turn(text), thread=True)
+
+    # ---- 命令候选 -----------------------------------------------------------
+
+    def on_input_changed(self, message: Any) -> None:
+        """输入一变就重算候选——候选是输入栏的内容，不是另开的一个页面。"""
+        self._menu = command_matches(str(message.value), TUI_COMMANDS)
+        self._menu_index = min(self._menu_index, max(0, len(self._menu) - 1))
+        self.query_one("#menu", Static).update(self._menu_text())
+
+    def _menu_text(self) -> str:
+        if not self._menu:
+            return ""
+        summaries = dict(TUI_COMMANDS)
+        lines = []
+        for index, name in enumerate(self._menu):
+            bullet = "▸" if index == self._menu_index else " "
+            lines.append(f" {bullet} {name:<9} {summaries[name]}")
+        return "\n".join(lines)
+
+    def _move_menu(self, step: int) -> None:
+        """在候选里移动，并把选中的那条**填进输入框**（留一个空格好补参数）。"""
+        self._menu_index = (self._menu_index + step) % len(self._menu)
+        prompt = self.query_one("#prompt", Input)
+        prompt.value = f"{self._menu[self._menu_index]} "
+        prompt.cursor_position = len(prompt.value)
+
+    def _refresh_menu(self) -> None:
+        self._menu = ()
+        self._menu_index = 0
+        self.query_one("#menu", Static).update("")
+
+    # ---- 斜杠命令 -----------------------------------------------------------
+
+    def _say(self, text: str) -> None:
+        """把命令的输出放进正文——与模型的回答同一个位置，不用两处找。"""
+        self.state = note(self.state, text)
+        self._refresh()
+
+    def _run_command(self, line: str) -> None:
+        """执行一行命令。**只做显示与收场**——命令本身在 `tui_commands` / 命令层里。"""
+        host = CommandHost(
+            session_id=self._session_id, policy=self._policy, banner=self.state.banner
+        )
+        outcome = run_command(line, host)
+        if outcome.logo:
+            self._say(render_lines(self.state)[0])
+        if outcome.text:
+            self._say(outcome.text)
+        if outcome.exit:
+            self.exit()
 
     def _recall(self, pick: Callable[[str], str]) -> None:
         """把历史里该显示的那一条放进输入框，并把光标放到末尾。"""
@@ -208,11 +274,17 @@ class FullscreenApp(App):
         prompt.cursor_position = len(prompt.value)
 
     def action_history_previous(self) -> None:
-        """上翻：取回更早的一条已提交输入。"""
+        """上翻：候选开着时在候选里走，否则取回更早的一条已提交输入。"""
+        if self._menu:
+            self._move_menu(-1)
+            return
         self._recall(self._history.previous)
 
     def action_history_next(self) -> None:
-        """下翻：越过最新一条就回到上翻之前正在写的草稿。"""
+        """下翻：候选开着时在候选里走，否则越过最新一条就回到草稿。"""
+        if self._menu:
+            self._move_menu(1)
+            return
         self._recall(self._history.next)
 
     def _turn(self, text: str) -> None:

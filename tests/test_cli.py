@@ -542,7 +542,16 @@ def test_ui_shell_enters_the_line_shell_without_a_terminal(tmp_path: Path) -> No
     out = io.StringIO()
 
     code = cli.main(
-        ["--ui", "shell", "--script", str(script), "--root", str(tmp_path), "--session", "ui-shell"],
+        [
+            "--ui",
+            "shell",
+            "--script",
+            str(script),
+            "--root",
+            str(tmp_path),
+            "--session",
+            "ui-shell",
+        ],
         out=out,
         stdin=io.StringIO("/exit\n"),
     )

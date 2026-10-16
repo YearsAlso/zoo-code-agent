@@ -103,6 +103,9 @@ LAYERS: dict[str, int] = {
     "surfaces.cli.parser": 6,
     "surfaces.cli.setup": 6,
     "surfaces.tui": 6,
+    # 命令接线站在命令层（L1）与状态层（L0）之上、并延迟取运行期（L2），
+    # 而 `tui_app`（L5）要 import 它——所以它 MUST 低于 5。
+    "surfaces.tui_commands": 2,
 }
 """引擎模块 → 层号。跨层依赖 MUST 指向更低的层，同层允许。
 

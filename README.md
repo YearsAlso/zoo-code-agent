@@ -23,7 +23,7 @@ edits them and runs your tests, with a permission gate in front of every write.
 ## What this is
 
 **Small is the design, not the maturity.** Everything this agent does is pinned by a spec under
-[`openspec/specs/`](openspec/specs/) and covered by tests (493 cases); a
+[`openspec/specs/`](openspec/specs/) and covered by tests (497 cases); a
 [task-level benchmark](#task-level-benchmark-what-it-can-do-in-numbers) reports what it can and
 cannot do — **including the runs where it fails**. Keeping it small is what lets you read the whole
 thing before you point it at your repository.
@@ -76,7 +76,7 @@ decoration.
 ```bash
 pip install -e ".[dev]"     # no real model SDK included
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # try it without cloning (0.0.1 today)
-pytest                      # 493 cases, none of which need an API key
+pytest                      # 497 cases, none of which need an API key
 python src/main.py          # start the scheduler and run the example workers (Ctrl-C to stop)
 python src/main.py -p "list the current directory" --script examples/smoke.json --allow list_dir   # key-free session
 ```
@@ -489,6 +489,12 @@ working directory, boundary) and a **framed input area** — the `❯` prefix ma
 the key hints sit permanently on the line below, listing **only the keys that work right now**
 (while an approval is pending it does not still say "Enter submits"). Submitted inputs come back with
 `↑` / `↓`, and coming back down lands on the draft you were writing. The keys and semantics are deliberately the same as the line-mode shell —
+Typing `/` lists the **commands with a one-line description each** above the input (`/cost` `/status`
+`/allow` `/skills` `/logo` `/exit`…), filtered as you type; `↑` / `↓` drop the selected one into the
+input so you can add arguments and press Enter. It runs the **same command layer**
+(`surfaces/commands.py`), not a second copy — and the commands the full-screen interface cannot run
+(the session-management ones such as `/sessions` `/resume` `/fork`) **never show up as candidates**;
+typing one tells you to use the line shell. The keys and semantics are deliberately the same as the line-mode shell —
 `Ctrl-C` interrupts the *turn*, `Ctrl-Q` leaves, and approvals answer `y` / `a` / `n` through the very
 same `PermissionPolicy` object. It is another **consumer of the same event stream**, not a second
 implementation: the module has no loop of its own.
@@ -626,7 +632,7 @@ rule warns about (that file lives in the framework repository, not in this one).
 
 ## Status
 
-All 37 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
+All 38 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
 merged into the 23 capability specs under [`openspec/specs/`](openspec/specs/) — those are the
 authoritative behaviour specs.
 
@@ -668,8 +674,9 @@ authoritative behaviour specs.
 | `split-god-modules` | The six over-budget files (824–421 lines) are split under 400 lines each and the whitelist is empty; **no test assertion changed** — the only exceptions are four monkeypatch targets that moved with the implementation, plus one real regression an existing test caught immediately | `project-layout` |
 | `polish-terminal-ui` | Bare `python src/main.py` now enters an interface in a terminal (non-terminals keep the scaffold default; `--ui` forces any of the four modes); the input area is framed with a `❯` prefix, key hints sit permanently below and list only the keys that work right now, and `↑`/`↓` recall history — it also finally guards the no-argument entry point | `project-layout` / `cli-interface` / `fullscreen-tui` |
 | `fix-ci-red` / `fix-clobbered-skip-marker` | Making the verification trustworthy: the case-count check no longer depends on which extras are installed, the CI version assertion uses `importlib.metadata`, and two writing styles that silently let whole groups of tests run are now rejected — module-level skipping and assigning `pytestmark` twice | `documentation-accuracy` / `model-client` |
+| `add-tui-command-menu` | The input bar is wired to the command layer: typing `/` lists commands with descriptions, filters as you type, `↑`/`↓` drop one into the input, Enter runs it — and it fixes `/help` in the full-screen interface being sent to the model as a prompt; commands the interface cannot run say where to use them instead and never appear as candidates | `fullscreen-tui` |
 
-- Tests: **493 cases** green, `ruff` clean; `openspec list` shows no active change and
+- Tests: **497 cases** green, `ruff` clean; `openspec list` shows no active change and
   all 23 baseline specs pass `--strict`.
 - Base: `zoo-framework>=0.12,<0.13`, `requires-python>=3.11`.
 - What's next: [ROADMAP.md](ROADMAP.md) (中文) — Now / Next / Later, each with a verifiable

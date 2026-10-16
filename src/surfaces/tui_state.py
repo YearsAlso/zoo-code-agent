@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -198,7 +198,7 @@ PHASE_LABELS = {
 BUSY_PHASES = ("thinking", "tools_pending")
 """算「忙」的阶段：在想、在跑工具。等审批不算——那时候等的是人，不是在跑。"""
 
-IDLE_HINT = "回车 提交 · ↑↓ 历史 · Ctrl-C 打断当轮 · Ctrl-Q 退出"
+IDLE_HINT = "回车 提交 · / 命令 · ↑↓ 历史 · Ctrl-C 打断当轮 · Ctrl-Q 退出"
 BUSY_HINT = "正在跑…… Ctrl-C 打断当轮 · Ctrl-Q 退出"
 APPROVAL_HINT = "y 允许一次 · a 总是允许 · n 拒绝"
 
@@ -232,6 +232,32 @@ def status_line(state: TuiState) -> str:
         f"{busy_mark(state)} {label} · 轮次 {state.turns} · tokens {state.tokens} · "
         f"{state.banner.model} · {state.banner.root} · 边界 {state.banner.boundary}"
     )
+
+
+def command_matches(text: str, candidates: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """输入框里的内容该匹配出哪些命令（按候选顺序返回，便于界面照抄）。
+
+    **纯函数，不认识命令注册表**：它只收一张 `(名字, 说明)` 列表。理由是分层——
+    本模块是 L0、命令层是 L1，直接 import 就是向上依赖（架构检查会拦）。
+    于是筛选规则本身能在没有终端、没有命令注册表的环境里断言。
+
+    规则：不以 `/` 开头就没有候选（普通提示里出现斜杠不该弹菜单）；只敲一个 `/` 给全部；
+    **一旦开始写参数（出现空格）就收起菜单**——那时使用者在补参数，候选已经没用了，
+    而方向键要还回去给历史。
+    """
+    if not text.startswith("/") or " " in text:
+        return ()
+    return tuple(name for name, _summary in candidates if name.startswith(text))
+
+
+def note(state: TuiState, text: str) -> TuiState:
+    """把一段**非模型产生**的输出放进正文（斜杠命令的结果走这里）。
+
+    与模型回答共用同一个显示位置：使用者关心的只有"屏幕上多了一段结果"，
+    另开一块区域只会让人在两处找。空行隔开，免得和模型的回答糊在一起。
+    """
+    lines = [*state.body, "", *(text.splitlines() or [""])]
+    return replace(state, body=tuple(lines[-MAX_BODY_LINES:]))
 
 
 HISTORY_LIMIT = 50

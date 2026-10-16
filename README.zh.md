@@ -23,7 +23,7 @@
 ## 定位
 
 **小是设计，不是成熟度。** 它能做的每件事都有 [`openspec/specs/`](openspec/specs/) 下的规格钉着、
-有 475 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
+有 492 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
 **包括它失败的那些运行**。做小，是为了让你在把它指向自己的仓库之前，能把它整个读完。
 
 - **是真的 agent，不是草图**：读文件、改代码、跑测试；会话跨进程重启能续跑；退出码说明它为什么停下来
@@ -42,7 +42,7 @@
 
 ```
 src/
-├── main.py                 入口：无参数起调度器；-p 跑一次会话；--eval 跑基准
+├── main.py                 入口：无参数进界面（非终端则起调度器）；-p 跑一次；--eval 跑基准
 ├── workers/                Worker —— 框架的任务执行单元
 │   ├── agent_worker.py     在标准 Worker 里跑一条 agent 会话（跨进程，原因见文件内说明）
 │   └── sample_worker.py    脚手架自带的示例
@@ -68,7 +68,7 @@ src/
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # 免 clone 跑一下（现在是 0.0.1）
-pytest                      # 475 用例，全部不需要 API 密钥
+pytest                      # 492 用例，全部不需要 API 密钥
 python src/main.py          # 起调度器跑示例 Worker（Ctrl-C 停止）
 python src/main.py -p "看看目录" --script examples/smoke.json --allow list_dir   # 零密钥会话
 ```
@@ -113,8 +113,9 @@ print(drive_session(master, "s1"))
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --help   # 免安装试用
 uvx --from "zoo-code-agent[eval]@git+https://github.com/YearsAlso/zoo-code-agent" zca --eval  # 基准（需 pytest）
 
-python src/main.py                                                # 脚手架默认行为：起调度器、跑 Worker
-python src/main.py -i                                             # 交互式会话（需要 ANTHROPIC_API_KEY）
+python src/main.py                                                # 终端里进界面（装了 tui extras 就全屏，否则逐行外壳）
+python src/main.py --ui workers                                   # 显式要脚手架默认行为：起调度器、跑 Worker
+python src/main.py -i                                             # 逐行交互式会话（需要 ANTHROPIC_API_KEY）
 python src/main.py -i --script examples/smoke.json --banner        # 交互式外壳，零密钥也能试
 python src/main.py -p "让 tests 通过" --allow write_file,edit_file,run_shell   # 无头单次
 python src/main.py --json -p "让 tests 通过" --allow run_shell     # 每行一个 JSON 事件
@@ -122,8 +123,10 @@ python src/main.py -p "看看目录" --script examples/smoke.json --allow list_d
 python src/main.py --eval                                          # 任务级基准
 ```
 
-**不带参数时是脚手架的默认行为**（起 `Master`、注册 `src/workers/` 里的 Worker、常驻运行），
-不会进入交互式会话——交互式要显式 `-i`。
+**不带参数时看你在哪跑**：**终端里**进界面——装了 `tui` extras 就是全屏，没装就是逐行外壳；
+**不在终端里**（管道、CI、子进程）仍是脚手架的默认行为：起 `Master`、注册 `src/workers/`
+里的 Worker、常驻运行。判定交给 `--ui`：`auto`（默认）/ `workers` / `tui` / `shell`，
+显式指定时不看环境。
 
 **退出码**区分终止原因，脚本才能据此分支：`0` 完成 / `2` 预算耗尽 / `3` 截止期到达 /
 `4` 超时 / `5` 错误。
@@ -414,8 +417,15 @@ python src/main.py --eval --real-provider --provider openai --base-url https://�
 
 ### 全屏界面：`--tui`
 
+![全屏界面](docs/assets/tui-preview.svg)
+
+*（上面这张是 Textual 自己导出的真实渲染，不是示意图；含浅色/深色两套主题。）*
+
 `pip install 'zoo-code-agent[tui]'` 之后 `zca --tui` 把同一条会话摆出形状：正文一区、工具调用一区、
-一行状态（阶段 / 轮次 / tokens / 当前边界）与一个输入框。按键与语义刻意与逐行外壳一致——
+一行状态（忙闲 / 阶段 / 轮次 / tokens / 模型 / 工作目录 / 边界）与一个**带边框的输入区**——
+`❯` 前缀标出"在哪打字"，键位常驻在它下面一行，并**只列此刻真的可用的键**（等待审批时不会
+还写着"回车提交"）。已提交过的输入可以用 `↑` / `↓` 取回，回到底部会回到你正在写的那句。
+按键与语义刻意与逐行外壳一致——
 `Ctrl-C` 打断**当轮**、`Ctrl-Q` 退出、审批用 `y` / `a` / `n` 并且走**同一个** `PermissionPolicy` 对象。
 它是**同一个事件流的另一个消费者**，不是第二份实现：那个模块里没有自己的循环。
 
@@ -536,7 +546,7 @@ session.close()
 
 ## 状态
 
-34 个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
+36 个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
 [`openspec/specs/`](openspec/specs/) 下的 23 份能力规格——那才是权威行为规格。
 
 | 变更 | 交付 | 对应能力 |
@@ -575,8 +585,9 @@ session.close()
 | `add-layering-invariants` | 分层不是目录形状，是可执行的断言：依赖方向单向、图无环（**含函数体内的延迟导入**）、单文件行数棘轮；顺带解掉唯一那个环（拆出 `tui_state`，而 `tests/test_tui.py` 一行没改） | `project-layout` |
 | `restructure-engine-into-layers` | 引擎收成五层包（`kernel` / `providers` / `tools` / `engine` / `surfaces`），`src/` 根下只剩入口与桥接；`from tools import Tool` 对**插件作者**一字未改，测试文件的改动只有导入路径（断言一行未动） | `project-layout` |
 | `split-god-modules` | 六个超限文件（824–421 行）拆到 400 行以内、白名单清空；**测试文件的断言一行未改**，唯一的例外是四处 monkeypatch 的注入目标随实现移动——外加一处真实回归被既有用例当场抓住 | `project-layout` |
+| `polish-terminal-ui` | 无参数在终端里直接进界面（非终端仍是脚手架默认行为，`--ui` 可显式指定）；输入区带边框与 `❯` 前缀、键位常驻且只列此刻可用的键、`↑↓` 取回历史；顺带补上"无参数入口"这条一直没被守过的路径 | `project-layout` / `cli-interface` / `fullscreen-tui` |
 
-- 测试：**475 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，23 份基线规格 `--strict` 校验通过。
+- 测试：**492 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，23 份基线规格 `--strict` 校验通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 - 下一步：[ROADMAP.md](ROADMAP.md)——Now / Next / Later 三档，每条都带可验证的完成判据。
 

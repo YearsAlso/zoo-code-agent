@@ -12,9 +12,9 @@
 
 ## [0.0.1] — 2026-10-14
 
-首个可用版本。**34 个变更**全部交付并归档（`openspec/changes/archive/`），
+首个可用版本。**36 个变更**全部交付并归档（`openspec/changes/archive/`），
 delta 合并为 **23 份能力规格**（`openspec/specs/`，权威行为规格）；
-**475 条用例**全绿，且**不需要任何模型 API 密钥**——脚本化模型是一等公民。
+**492 条用例**全绿，且**不需要任何模型 API 密钥**——脚本化模型是一等公民。
 
 ### 新增
 
@@ -54,9 +54,20 @@ delta 合并为 **23 份能力规格**（`openspec/specs/`，权威行为规格�
 - **上帝模块拆完**：六个超过 400 行的文件（824–421 行）拆成各自职责单一的模块，
   行数白名单清空；`from tools import Tool` 这类既有写法一字未改
   （`split-god-modules`）
+- **终端界面成了默认**：`python src/main.py` 不带参数时，在终端里直接进界面
+  （装了 `tui` extras 全屏，否则逐行外壳），非终端仍是脚手架默认行为；
+  `--ui` 可显式指定四种（`auto` / `workers` / `tui` / `shell`）（`polish-terminal-ui`）
+- **输入区不再是裸输入框**：带边框与 `❯` 前缀，键位常驻在下面一行**且只列此刻真的可用的键**，
+  `↑` / `↓` 取回已提交的输入，状态行改含模型与工作目录；顺带补上了"无参数入口"这条
+  一直没被守过的路径（`polish-terminal-ui`）
 
 ### 修复
 
+- **CI 一直是红的，而且不是产品的问题**：`tests/test_docs.py` 拿"本环境收集到的用例数"比对文档，
+  而没装 `anthropic` extra 的环境少收集 11 条（模块级 `importorskip` 让整组用例在收集阶段消失）
+  ——判据依赖环境，等于它管的不是文档漂移而是这台机器装了什么。现在收集数与 extras 无关，
+  并加了一条检查拒绝"模块级跳过"这种写法；CI 里那句 `rich.__version__` 断言也换成
+  `importlib.metadata`（新版 rich 不提供该属性）（`fix-ci-red`）
 - **就地运行入口崩溃**：`python src/main.py -p ...` 与 `--eval --real-provider` 都栽在相对导入上，
   而当时 149 条用例全绿——因为 CLI 用例全在进程内调且全带 `--script`。现在有**子进程**冒烟用例守着
   （`fix-entry-and-approval-preview`）

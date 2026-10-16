@@ -20,17 +20,6 @@ from kernel.model import RateLimited, TextDelta, ToolCall, is_retryable
 from kernel.permissions import PermissionPolicy
 from surfaces import cli
 
-# 整组用例按依赖跳过，但**在收集阶段不消失**。
-#
-# 为什么不是模块级 `pytest.importorskip`：那样这 11 条用例会在收集阶段整组消失，
-# 于是"全仓用例数"变成"装了哪些可选 extras"的函数——而文档里的数字要跟它比对
-# （`tests/test_docs.py`）。判据依赖环境时，它管的就不是文档有没有漂移，
-# 而是这台机器装了什么。2026-10-16 实测：没装 SDK 时收集数 476 → 465，差的正是这个文件。
-pytestmark = pytest.mark.skipif(
-    importlib.util.find_spec("anthropic") is None,
-    reason="没装 anthropic SDK；装了它的环境才跑得到这条真实路径",
-)
-
 
 def _loopback_bindable() -> bool:
     """能不能在回环地址上起端口（受限环境会拒绝，那时跳过并写明原因）。"""
@@ -46,10 +35,28 @@ def _loopback_bindable() -> bool:
         probe.close()
 
 
-pytestmark = pytest.mark.skipif(
-    not _loopback_bindable(),
-    reason="本环境不允许绑定回环端口（外层沙箱）；这组用例需要起一个本地 HTTP 服务",
-)
+# 整组用例按条件跳过，但**在收集阶段不消失**。两条条件都必须留着：
+#
+# - SDK 那条：模块级 `pytest.importorskip` 会让 11 条用例在收集阶段整组消失，于是
+#   "全仓用例数"变成"装了哪些可选 extras"的函数——而文档里的数字要跟它比对
+#   （`tests/test_docs.py`）。2026-10-16 实测：没装 SDK 时收集数 476 → 465，
+#   差的正是这个文件。
+# - 回环那条：本文件要起一个本地 HTTP 服务，沙箱里可能绑不了端口。
+#
+# **必须写成列表**：一个模块只能有一个 `pytestmark` 赋值，写成两次时**后一条会静默
+# 覆盖前一条**——实测踩过：SDK 那条被下面这条回环的盖掉，于是 CI 的默认作业
+# （刻意不装 SDK）里这组用例照跑、整组报 ModuleNotFoundError，而本机因为回环那条
+# 本来就会跳过，看不出任何异常。
+pytestmark = [
+    pytest.mark.skipif(
+        importlib.util.find_spec("anthropic") is None,
+        reason="没装 anthropic SDK；装了它的环境才跑得到这条真实路径",
+    ),
+    pytest.mark.skipif(
+        not _loopback_bindable(),
+        reason="本环境不允许绑定回环端口（外层沙箱）；这组用例需要起一个本地 HTTP 服务",
+    ),
+]
 
 
 @pytest.fixture

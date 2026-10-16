@@ -12,9 +12,9 @@
 
 ## [0.0.1] — 2026-10-14
 
-首个可用版本。**36 个变更**全部交付并归档（`openspec/changes/archive/`），
+首个可用版本。**37 个变更**全部交付并归档（`openspec/changes/archive/`），
 delta 合并为 **23 份能力规格**（`openspec/specs/`，权威行为规格）；
-**492 条用例**全绿，且**不需要任何模型 API 密钥**——脚本化模型是一等公民。
+**493 条用例**全绿，且**不需要任何模型 API 密钥**——脚本化模型是一等公民。
 
 ### 新增
 
@@ -68,6 +68,10 @@ delta 合并为 **23 份能力规格**（`openspec/specs/`，权威行为规格�
   ——判据依赖环境，等于它管的不是文档漂移而是这台机器装了什么。现在收集数与 extras 无关，
   并加了一条检查拒绝"模块级跳过"这种写法；CI 里那句 `rich.__version__` 断言也换成
   `importlib.metadata`（新版 rich 不提供该属性）（`fix-ci-red`）
+- **改完之后 CI 还是红的**：`tests/test_anthropic_http.py` 早就有一条 `pytestmark`，
+  新加的"没装 SDK 就跳过"被它**静默覆盖**（一个模块只能有一个 `pytestmark`，后者顶掉前者），
+  于是 CI 的默认作业里那组用例照跑、整组报 `ModuleNotFoundError`。两条跳过条件现在写成
+  一个列表，并加了一条检查拒绝"两次赋值 `pytestmark`"（`fix-clobbered-skip-marker`）
 - **就地运行入口崩溃**：`python src/main.py -p ...` 与 `--eval --real-provider` 都栽在相对导入上，
   而当时 149 条用例全绿——因为 CLI 用例全在进程内调且全带 `--script`。现在有**子进程**冒烟用例守着
   （`fix-entry-and-approval-preview`）

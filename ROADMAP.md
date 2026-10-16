@@ -6,8 +6,8 @@
 
 分三档：**Now**（正在推进）／**Next**（已立项，有对应 issue）／**Later**（在考虑，方向未定，尚未立项）。
 
-**当前基线（2026-10-15）**：492 条用例全绿、23 份能力规格（[`openspec/specs/`](openspec/specs/)）、
-36 个已归档变更；已交付的完整清单见 README 的「Status」。
+**当前基线（2026-10-15）**：493 条用例全绿、23 份能力规格（[`openspec/specs/`](openspec/specs/)）、
+37 个已归档变更；已交付的完整清单见 README 的「Status」。
 
 ---
 
@@ -55,7 +55,7 @@
 ### 发布与版本：发 PyPI、tag 驱动（[#46](https://github.com/YearsAlso/zoo-code-agent/issues/46)）
 
 - **已交付**：版本号**单一真源**（运行时读分发包元数据，就地回落 `pyproject.toml`）、`zca --version`、
-  `CHANGELOG.md`（0.0.1 覆盖全部 36 个归档变更）、tag 驱动的发布流程（**版本一致性闸门** +
+  `CHANGELOG.md`（0.0.1 覆盖全部 37 个归档变更）、tag 驱动的发布流程（**版本一致性闸门** +
   全量用例 + **装上刚构建的 wheel 再冒烟** + trusted publishing 无长期 token）、元数据补齐
   （`readme` / `[project.urls]`）。本机实测：`uv build` 出 sdist + wheel，装进临时 venv 后
   `zca --version` 与脚本化会话都通。
@@ -93,7 +93,7 @@
 本页不写日期，但每条都有**可验证的完成判据**。除此之外：
 
 - **行为**以 [`openspec/specs/`](openspec/specs/) 为准——那是权威规格，不是本页；
-- **用例**以 `pytest` 为准（当前 492 条）；
+- **用例**以 `pytest` 为准（当前 493 条）；
 - **数字**以 [`bench/results/`](bench/results/) 里的原始 JSON 为准。
 
 **若本页与上述任一来源冲突，以那些来源为准。**

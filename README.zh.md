@@ -23,7 +23,7 @@
 ## 定位
 
 **小是设计，不是成熟度。** 它能做的每件事都有 [`openspec/specs/`](openspec/specs/) 下的规格钉着、
-有 492 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
+有 493 条用例覆盖，并且有一份[任务级基准](#任务级基准它能干什么用数字说话)报告它能做什么、不能做什么——
 **包括它失败的那些运行**。做小，是为了让你在把它指向自己的仓库之前，能把它整个读完。
 
 - **是真的 agent，不是草图**：读文件、改代码、跑测试；会话跨进程重启能续跑；退出码说明它为什么停下来
@@ -68,7 +68,7 @@ src/
 ```bash
 pip install -e ".[dev]"     # 默认不含真实模型 SDK
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # 免 clone 跑一下（现在是 0.0.1）
-pytest                      # 492 用例，全部不需要 API 密钥
+pytest                      # 493 用例，全部不需要 API 密钥
 python src/main.py          # 起调度器跑示例 Worker（Ctrl-C 停止）
 python src/main.py -p "看看目录" --script examples/smoke.json --allow list_dir   # 零密钥会话
 ```
@@ -546,7 +546,7 @@ session.close()
 
 ## 状态
 
-36 个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
+37 个变更全部交付并**已归档**（`openspec/changes/archive/`），它们的 delta 已合并为
 [`openspec/specs/`](openspec/specs/) 下的 23 份能力规格——那才是权威行为规格。
 
 | 变更 | 交付 | 对应能力 |
@@ -586,8 +586,9 @@ session.close()
 | `restructure-engine-into-layers` | 引擎收成五层包（`kernel` / `providers` / `tools` / `engine` / `surfaces`），`src/` 根下只剩入口与桥接；`from tools import Tool` 对**插件作者**一字未改，测试文件的改动只有导入路径（断言一行未动） | `project-layout` |
 | `split-god-modules` | 六个超限文件（824–421 行）拆到 400 行以内、白名单清空；**测试文件的断言一行未改**，唯一的例外是四处 monkeypatch 的注入目标随实现移动——外加一处真实回归被既有用例当场抓住 | `project-layout` |
 | `polish-terminal-ui` | 无参数在终端里直接进界面（非终端仍是脚手架默认行为，`--ui` 可显式指定）；输入区带边框与 `❯` 前缀、键位常驻且只列此刻可用的键、`↑↓` 取回历史；顺带补上"无参数入口"这条一直没被守过的路径 | `project-layout` / `cli-interface` / `fullscreen-tui` |
+| `fix-ci-red` / `fix-clobbered-skip-marker` | 让验证本身可信：用例数的判据不再随装了哪些 extras 变化、CI 的版本断言改用 `importlib.metadata`、并拒绝"模块级跳过"与"两次赋值 `pytestmark`"这两种会让整组用例静默跑起来的写法 | `documentation-accuracy` / `model-client` |
 
-- 测试：**492 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，23 份基线规格 `--strict` 校验通过。
+- 测试：**493 条**用例全绿，`ruff` 通过；`openspec list` 无活跃变更，23 份基线规格 `--strict` 校验通过。
 - 基座：`zoo-framework>=0.12,<0.13`，`requires-python>=3.11`。
 - 下一步：[ROADMAP.md](ROADMAP.md)——Now / Next / Later 三档，每条都带可验证的完成判据。
 

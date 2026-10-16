@@ -23,7 +23,7 @@ edits them and runs your tests, with a permission gate in front of every write.
 ## What this is
 
 **Small is the design, not the maturity.** Everything this agent does is pinned by a spec under
-[`openspec/specs/`](openspec/specs/) and covered by tests (492 cases); a
+[`openspec/specs/`](openspec/specs/) and covered by tests (493 cases); a
 [task-level benchmark](#task-level-benchmark-what-it-can-do-in-numbers) reports what it can and
 cannot do — **including the runs where it fails**. Keeping it small is what lets you read the whole
 thing before you point it at your repository.
@@ -76,7 +76,7 @@ decoration.
 ```bash
 pip install -e ".[dev]"     # no real model SDK included
 uvx --from git+https://github.com/YearsAlso/zoo-code-agent zca --version   # try it without cloning (0.0.1 today)
-pytest                      # 492 cases, none of which need an API key
+pytest                      # 493 cases, none of which need an API key
 python src/main.py          # start the scheduler and run the example workers (Ctrl-C to stop)
 python src/main.py -p "list the current directory" --script examples/smoke.json --allow list_dir   # key-free session
 ```
@@ -626,7 +626,7 @@ rule warns about (that file lives in the framework repository, not in this one).
 
 ## Status
 
-All 36 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
+All 37 changes are delivered and **archived** (`openspec/changes/archive/`); their deltas were
 merged into the 23 capability specs under [`openspec/specs/`](openspec/specs/) — those are the
 authoritative behaviour specs.
 
@@ -667,8 +667,9 @@ authoritative behaviour specs.
 | `restructure-engine-into-layers` | The engine is now five layer packages (`kernel` / `providers` / `tools` / `engine` / `surfaces`) with only the entry point and the install-time bridge left at the `src/` root; `from tools import Tool` is untouched **for plugin authors**, and the only test-file changes are import paths (no assertion changed) | `project-layout` |
 | `split-god-modules` | The six over-budget files (824–421 lines) are split under 400 lines each and the whitelist is empty; **no test assertion changed** — the only exceptions are four monkeypatch targets that moved with the implementation, plus one real regression an existing test caught immediately | `project-layout` |
 | `polish-terminal-ui` | Bare `python src/main.py` now enters an interface in a terminal (non-terminals keep the scaffold default; `--ui` forces any of the four modes); the input area is framed with a `❯` prefix, key hints sit permanently below and list only the keys that work right now, and `↑`/`↓` recall history — it also finally guards the no-argument entry point | `project-layout` / `cli-interface` / `fullscreen-tui` |
+| `fix-ci-red` / `fix-clobbered-skip-marker` | Making the verification trustworthy: the case-count check no longer depends on which extras are installed, the CI version assertion uses `importlib.metadata`, and two writing styles that silently let whole groups of tests run are now rejected — module-level skipping and assigning `pytestmark` twice | `documentation-accuracy` / `model-client` |
 
-- Tests: **492 cases** green, `ruff` clean; `openspec list` shows no active change and
+- Tests: **493 cases** green, `ruff` clean; `openspec list` shows no active change and
   all 23 baseline specs pass `--strict`.
 - Base: `zoo-framework>=0.12,<0.13`, `requires-python>=3.11`.
 - What's next: [ROADMAP.md](ROADMAP.md) (中文) — Now / Next / Later, each with a verifiable

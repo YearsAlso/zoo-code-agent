@@ -155,3 +155,42 @@ def test_no_test_module_skips_at_collection_time() -> None:
         + "\n  ".join(offenders)
         + "\n改成模块级 `pytest.mark.skipif(...)` 或把 `importorskip` 放进用例体内。"
     )
+
+
+def _pytestmark_assignments(path: Path) -> list[int]:
+    """某个测试模块里**模块级**赋值 `pytestmark` 的行号。"""
+    found: list[int] = []
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
+                found.append(node.lineno)
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "pytestmark"
+        ):
+            found.append(node.lineno)
+    return found
+
+
+def test_no_test_module_assigns_pytestmark_twice() -> None:
+    """测试模块 MUST NOT 多次赋值 `pytestmark`——第二次会**静默**覆盖第一次。
+
+    这不是风格问题：被覆盖的那条标记安静地消失，直到某天在一个"缺依赖 + 允许回环"
+    的环境（也就是 CI）里整组用例跑起来才炸。实测过：`tests/test_anthropic_http.py`
+    里新加的"没装 SDK 就跳过"被原有的"沙箱不能绑回环端口"覆盖，
+    CI 六个默认作业全红，而本机因为回环那条本来就会跳过，看不出任何异常。
+
+    多条条件 MUST 写成一个列表：`pytestmark = [mark_a, mark_b]`。
+    """
+    offenders = [
+        f"{path.name}: {sorted(lines)}"
+        for path in sorted((REPO_ROOT / "tests").glob("*.py"))
+        if len(lines := _pytestmark_assignments(path)) > 1
+    ]
+
+    assert offenders == [], (
+        "这些测试模块多次赋值 `pytestmark`，后一条会静默覆盖前一条：\n  "
+        + "\n  ".join(offenders)
+        + "\n把多条条件写进同一个列表：`pytestmark = [mark_a, mark_b]`。"
+    )

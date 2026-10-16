@@ -7,13 +7,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 
 import pytest
-
-pytest.importorskip("anthropic", reason="没装 anthropic SDK；装了它的环境才跑得到这条真实路径")
-
 from fake_provider import FakeProvider, failing, reply
 
 from engine.agent import build_master, drive_session
@@ -21,6 +19,17 @@ from engine.runtime import AgentRuntime
 from kernel.model import RateLimited, TextDelta, ToolCall, is_retryable
 from kernel.permissions import PermissionPolicy
 from surfaces import cli
+
+# 整组用例按依赖跳过，但**在收集阶段不消失**。
+#
+# 为什么不是模块级 `pytest.importorskip`：那样这 11 条用例会在收集阶段整组消失，
+# 于是"全仓用例数"变成"装了哪些可选 extras"的函数——而文档里的数字要跟它比对
+# （`tests/test_docs.py`）。判据依赖环境时，它管的就不是文档有没有漂移，
+# 而是这台机器装了什么。2026-10-16 实测：没装 SDK 时收集数 476 → 465，差的正是这个文件。
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("anthropic") is None,
+    reason="没装 anthropic SDK；装了它的环境才跑得到这条真实路径",
+)
 
 
 def _loopback_bindable() -> bool:

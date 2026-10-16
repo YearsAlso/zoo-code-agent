@@ -11,9 +11,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
-pytest.importorskip("pytest", reason="基准要用 pytest 当验收命令")  # 必有，但把依赖写明
-
 from fake_provider import FakeProvider, failing, steps_from_script
 
 from evals.__main__ import main as eval_main

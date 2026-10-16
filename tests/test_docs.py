@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -108,3 +109,49 @@ def test_declared_spec_count_matches_the_spec_directory(name: str) -> None:
 def test_declared_archived_change_count_matches_the_archive_directory(name: str) -> None:
     """已归档变更数 MUST 等于 `openspec/changes/archive/` 下的实际目录数。"""
     _check(name, CHANGE_PATTERNS, _actual_archived_changes(), "已归档变更数")
+
+
+def _module_level_importorskip(path: Path) -> list[str]:
+    """某个测试模块里**模块级**调用 `importorskip` 的位置。
+
+    只看模块体，不进函数与类——函数体内的 `importorskip` 是本仓库的正确用法
+    （按依赖跳过单条用例），它不影响收集数。
+    """
+    found: list[str] = []
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            continue
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "importorskip"
+            ):
+                found.append(f"{path.name}:{sub.lineno}")
+    return found
+
+
+def test_no_test_module_skips_at_collection_time() -> None:
+    """测试模块 MUST NOT 在模块级跳过。
+
+    这条不是风格偏好，它守的是上面那条用例数判据的**地基**：模块级 `importorskip` 会让
+    整组用例在**收集阶段**消失，于是"全仓用例数"变成"装了哪些可选 extras"的函数。
+    判据一旦依赖环境，它管的就不是文档有没有漂移，而是这台机器装了什么——
+    而它的表现是"本地全绿、CI 红"，或者更糟：数字被改成某台机器的值。
+
+    实测（2026-10-16）：`tests/test_anthropic_http.py` 的模块级 `importorskip` 让
+    没装 SDK 的环境少收集 11 条，`main` 上的 CI 因此红了两次推送。
+
+    依赖可选 extras 的用例改用**运行时**跳过：模块级 `skipif` 标记或函数体内 `importorskip`。
+    """
+    offenders = [
+        item
+        for path in sorted((REPO_ROOT / "tests").glob("*.py"))
+        for item in _module_level_importorskip(path)
+    ]
+
+    assert offenders == [], (
+        "这些测试模块在模块级跳过，会让收集到的用例数随环境变化：\n  "
+        + "\n  ".join(offenders)
+        + "\n改成模块级 `pytest.mark.skipif(...)` 或把 `importorskip` 放进用例体内。"
+    )

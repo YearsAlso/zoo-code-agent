@@ -75,6 +75,8 @@ jobs:
           pip install -e ".[dev,tui,rich,anthropic]"
       - name: Assert the optional extras really are present
         run: |
-          python -c "import anthropic, rich, textual; print('OK: rich', rich.__version__, '/ textual', textual.__version__, '/ anthropic', anthropic.__version__)"
+          # 版本问 importlib.metadata（分发包元数据），不读模块属性——`rich` 已经不提供
+          # `rich.__version__` 了，那句断言曾在每次推送时以 AttributeError 收场（实测 2026-10-16）。
+          python -c "import anthropic, rich, textual; from importlib.metadata import version; print('OK: rich', version('rich'), '/ textual', version('textual'), '/ anthropic', version('anthropic'))"
       - name: Test
         run: pytest

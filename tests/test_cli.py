@@ -532,16 +532,17 @@ def test_ui_workers_forces_the_scheduler_even_in_a_terminal() -> None:
     assert code == 0
 
 
-def test_ui_shell_enters_the_line_shell_without_a_terminal() -> None:
+def test_ui_shell_enters_the_line_shell_without_a_terminal(tmp_path: Path) -> None:
     """`--ui shell` 在非终端下也进逐行外壳——显式指定不受环境摆布。
 
     零密钥：用 `--script` 跑一条脚本化会话，然后从 stdin 收到 `/exit` 退出。
     """
-    script = _script_file(Path("/tmp"), [{"text": "好。", "tokens": 1}])
+    # 用 tmp_path 而不是写死 `/tmp`：后者在 Windows 上不存在（CI 抓到过）。
+    script = _script_file(tmp_path, [{"text": "好。", "tokens": 1}])
     out = io.StringIO()
 
     code = cli.main(
-        ["--ui", "shell", "--script", str(script), "--root", "/tmp", "--session", "ui-shell"],
+        ["--ui", "shell", "--script", str(script), "--root", str(tmp_path), "--session", "ui-shell"],
         out=out,
         stdin=io.StringIO("/exit\n"),
     )

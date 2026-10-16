@@ -9,8 +9,11 @@
 from __future__ import annotations
 
 import os
+import queue
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -19,17 +22,30 @@ MAIN_PY = REPO_ROOT / "src" / "main.py"
 
 def _run(argv: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     """以干净的密钥环境跑一条入口，避免"本机恰好有密钥"改变结论。"""
-    env = dict(os.environ)
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
-        env.pop(name, None)
     return subprocess.run(
         argv,
         cwd=cwd,
-        env=env,
+        env=_clean_env(),
         capture_output=True,
         text=True,
         timeout=180,
     )
+
+
+def _clean_env() -> dict[str, str]:
+    """子进程的环境：不带任何模型密钥，且**不缓冲**。
+
+    "本机恰好有密钥"不该改变结论，所以密钥一律剥掉。
+
+    不缓冲是给常驻进程用的：stdout 接到管道时 Python 默认按块缓冲，于是
+    `python src/main.py` 这种不返回的进程会**一行都读不到**——而"它卡住了"和
+    "它没输出"是两件完全不同的事（实测：不加这一条，那条无参数用例等到超时也只拿到空字符串）。
+    """
+    env = dict(os.environ)
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+        env.pop(name, None)
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
 
 
 def _combined(result: subprocess.CompletedProcess[str]) -> str:
@@ -145,3 +161,66 @@ def test_the_entry_is_importable_as_a_package() -> None:
     assert result.returncode == 0, f"以包导入时解析失败：\n{output}"
     assert "ModuleNotFoundError" not in output, output
     assert "ok" in output
+
+
+SCHEDULER_MARKERS = ("Master started", "[sample_worker] tick")
+"""调度器真的起来了的证据。两条都收：前者是框架的日志，后者是我们自己的 Worker 输出。"""
+
+
+def test_no_arguments_starts_the_scheduler_when_not_a_terminal() -> None:
+    """无参数 + **非终端** MUST 起调度器跑 Worker，并常驻。
+
+    这条入口是文档与规格都承诺过的（`project-layout` 的「无参数」场景），却直到
+    2026-10-16 一条用例都没有——`test_layout.py` 只检查两个 `# zfc:` 标记还在不在。
+    而它正是"在终端里默认进界面"这次改动**唯一不能碰**的那条路径：管道、CI、
+    `zfc` 工作流都靠它。
+
+    进程是常驻的（`master.run()` 不返回），所以不能像别的用例那样等它自己退出：
+    读到 Worker 真的跑起来、断言它此刻还活着，然后杀掉。
+    """
+    process = subprocess.Popen(
+        [sys.executable, str(MAIN_PY)],
+        cwd=REPO_ROOT,
+        env=_clean_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def pump() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
+    seen: list[str] = []
+    found = False
+    try:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            try:
+                line = lines.get(timeout=1)
+            except queue.Empty:
+                continue
+            if line is None:  # 进程自己退出了——那本身就是要失败的事实
+                break
+            seen.append(line)
+            if any(marker in line for marker in SCHEDULER_MARKERS):
+                found = True
+                break
+        alive = process.poll() is None
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:  # pragma: no cover - 兜底
+            process.kill()
+
+    output = "".join(seen)
+
+    assert "ModuleNotFoundError" not in output and "ImportError" not in output, output
+    assert found, f"无参数没有起调度器（等到的输出）：\n{output}"
+    assert alive, f"脚手架默认行为是常驻的，不该自己退出：\n{output}"
+    assert "[error] 需要 -p" not in output, "非终端下 MUST NOT 索要提示"

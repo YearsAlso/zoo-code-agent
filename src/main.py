@@ -46,15 +46,18 @@ def run_project() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """命令行入口：无参数走脚手架默认行为；有参数分别转发给会话 CLI 与基准。"""
+    """命令行入口：转发给会话 CLI 与基准；无参数时由 `--ui` 决定跑什么。
+
+    **无参数不再无条件起调度器**：非终端下仍是它（管道、CI、子进程一个字节不变），
+    终端里则进界面（装了界面库就全屏，否则逐行外壳），想显式起调度器用 `--ui workers`。
+    判定在 `surfaces.cli` 里，这里只把脚手架默认行为**注入**给它——引擎不该反向依赖入口。
+    """
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["--eval"]:
         from evals.__main__ import main as eval_main
 
         return eval_main(args[1:])
-    if args:
-        return cli.main(args)
-    return run_project()
+    return cli.main(args, scaffold_default=run_project)
 
 
 if __name__ == "__main__":

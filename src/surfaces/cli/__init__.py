@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from kernel.model import ModelError
@@ -46,7 +46,10 @@ from surfaces.cli.setup import (
     boundary_for,
     build_policy,
     build_renderer,
+    choose_ui,
     collect_tools,
+    has_ui_library,
+    is_a_terminal,
     parse_ref,
     prepare_session,
     show_entry,
@@ -94,8 +97,15 @@ def main(
     *,
     out: TextIO | None = None,
     stdin: TextIO | None = None,
+    scaffold_default: Callable[[], int] | None = None,
 ) -> int:
-    """命令行入口。返回进程退出码。"""
+    """命令行入口。返回进程退出码。
+
+    Args:
+        scaffold_default: 没指定模式、且 `--ui` 判成 `workers` 时执行的东西（起调度器、跑 Worker）。
+            **由调用方注入**，而不是在这里 import `main`——`surfaces.cli` 是引擎的一部分，
+            反向依赖入口会绕成一个环，架构检查会（正确地）拦下它。
+    """
     args = build_parser().parse_args(argv)
     stream_out = out if out is not None else sys.stdout
     stream_in = stdin if stdin is not None else sys.stdin
@@ -116,8 +126,20 @@ def main(
             return run_once(args, out=stream_out, stdin=stream_in)
         if args.interactive:
             return run_interactive(args, out=stream_out, stdin=stream_in)
-        stream_out.write('[error] 需要 -p "<提示>" 或 -i（交互式）\n')
-        return EXIT_ERROR
+        # 没有指定模式：交给 --ui 决定。非终端下这是脚手架默认行为（与改动前一致）。
+        mode = choose_ui(
+            is_tty=is_a_terminal(stream_in) and is_a_terminal(stream_out),
+            has_textual=has_ui_library(),
+            requested=args.ui,
+        )
+        if mode == "tui":
+            return run_fullscreen(args, out=stream_out, stdin=stream_in)
+        if mode == "shell":
+            return run_interactive(args, out=stream_out, stdin=stream_in)
+        if scaffold_default is None:
+            stream_out.write('[error] 需要 -p "<提示>" 或 -i（交互式）\n')
+            return EXIT_ERROR
+        return scaffold_default()
     except (OSError, ValueError, json.JSONDecodeError, ModelError, ToolError) as exc:
         stream_out.write(f"[error] {exc}\n")
         return EXIT_ERROR

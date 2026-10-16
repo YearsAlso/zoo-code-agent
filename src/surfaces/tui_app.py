@@ -17,8 +17,10 @@ from typing import Any, ClassVar
 from kernel import agent_events
 from surfaces.tui_state import (
     Banner,
+    History,
     TuiState,
     apply_event,
+    hint_line,
     render_lines,
     status_line,
 )
@@ -27,12 +29,13 @@ from surfaces.tui_state import (
 def _textual():
     """延迟取 Textual 的件（导入这个模块本身不要求装它）。"""
     from textual.app import App, ComposeResult
+    from textual.containers import Horizontal
     from textual.widgets import Footer, Header, Input, Static
 
-    return App, ComposeResult, Footer, Header, Input, Static
+    return App, ComposeResult, Footer, Header, Horizontal, Input, Static
 
 
-App, ComposeResult, Footer, Header, Input, Static = _textual()
+App, ComposeResult, Footer, Header, Horizontal, Input, Static = _textual()
 
 
 class FullscreenApp(App):
@@ -48,15 +51,26 @@ class FullscreenApp(App):
     """
 
     CSS = """
-    #body { height: 1fr; padding: 0 1; }
-    #tools { height: auto; max-height: 8; padding: 0 1; color: $text-muted; }
-    #approval { height: auto; padding: 0 1; background: $warning 20%; }
-    #status { height: 1; padding: 0 1; color: $text-muted; }
+    #body { height: 1fr; padding: 0 2; }
+    #tools { height: auto; max-height: 8; padding: 0 2; color: $text-muted; }
+    #approval { height: auto; padding: 0 2; background: $warning 20%; border-left: thick $warning; }
+    #status { height: 1; padding: 0 2; color: $text-muted; }
+
+    /* 输入区：与正文分开、看得到"在哪打字"。边框用 round，与终端里常见的方角区分开。 */
+    #composer { height: 3; border: round $accent; padding: 0 1; }
+    #composer:focus-within { border: round $accent-lighten-1; }
+    #prompt-mark { width: 2; content-align: center middle; color: $accent; }
+    #prompt { border: none; height: 1; width: 1fr; background: transparent; }
+
+    /* 键位常驻在输入区正下方——敲到一半才需要它。 */
+    #hint { height: 1; padding: 0 2; color: $text-muted; }
     """
 
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("ctrl+q", "quit_app", "退出"),
         ("ctrl+c", "interrupt", "打断当轮"),
+        ("up", "history_previous", "上一条"),
+        ("down", "history_next", "下一条"),
         ("y", "approve", ""),
         ("a", "approve_always", ""),
         ("n", "deny", ""),
@@ -90,6 +104,7 @@ class FullscreenApp(App):
         self._approval_tool_name = ""
         self._toolset = tuple(toolset)
         self._master: Any = None
+        self._history = History()
         # 名字刻意避开了 `_running` 这类通用词：Textual 的 App 自己也用它们，
         # 而且是在 __init__ **之后**赋值——重名会被它悄悄覆盖掉（这条是无头用例抓出来的）。
         self._busy = threading.Event()
@@ -102,7 +117,12 @@ class FullscreenApp(App):
         yield Static("", id="tools")
         yield Static("", id="approval")
         yield Static("", id="status")
-        yield Input(placeholder="输入任务，回车提交（Ctrl-C 打断当轮，Ctrl-Q 退出）", id="prompt")
+        with Horizontal(id="composer"):
+            yield Static("❯", id="prompt-mark")
+            # 占位符只说明"这里能打字"：键位在下面的提示行里常驻，
+            # 塞进占位符等于在按下第一个字符时就把它弄丢。
+            yield Input(placeholder="说点什么…", id="prompt")
+        yield Static("", id="hint")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -130,6 +150,7 @@ class FullscreenApp(App):
             else ""
         )
         self.query_one("#status", Static).update(status_line(self.state))
+        self.query_one("#hint", Static).update(hint_line(self.state))
 
     # ---- 审批 ---------------------------------------------------------------
 
@@ -174,10 +195,25 @@ class FullscreenApp(App):
         text = str(message.value).strip()
         if not text or self._busy.is_set():
             return
+        self._history.push(text)
         message.input.value = ""
         self.state = apply_event(self.state, {"type": "user_prompt", "text": text})
         self._refresh()
         self.run_worker(lambda: self._turn(text), thread=True)
+
+    def _recall(self, pick: Callable[[str], str]) -> None:
+        """把历史里该显示的那一条放进输入框，并把光标放到末尾。"""
+        prompt = self.query_one("#prompt", Input)
+        prompt.value = pick(prompt.value)
+        prompt.cursor_position = len(prompt.value)
+
+    def action_history_previous(self) -> None:
+        """上翻：取回更早的一条已提交输入。"""
+        self._recall(self._history.previous)
+
+    def action_history_next(self) -> None:
+        """下翻：越过最新一条就回到上翻之前正在写的草稿。"""
+        self._recall(self._history.next)
 
     def _turn(self, text: str) -> None:
         """推进一轮（worker 线程）。会话装配 / 追加 / 取消语义全部复用既有实现。"""

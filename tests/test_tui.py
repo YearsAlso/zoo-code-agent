@@ -15,9 +15,11 @@ from surfaces.tui import (
     MAX_BODY_LINES,
     Approval,
     Banner,
+    History,
     TuiState,
     apply_event,
     fold_events,
+    hint_line,
     render_lines,
     run_tui,
     status_line,
@@ -209,11 +211,86 @@ def test_the_approval_lines_come_with_the_diff() -> None:
     assert "[需要审批]" in text and "+ok" in text and "[y/N/a]" in text
 
 
-def test_status_line_names_the_phase_and_the_keys() -> None:
+def test_status_line_names_the_phase_and_the_session_facts() -> None:
+    """状态行带忙闲标记与三样事实：阶段、模型、工作目录。
+
+    键位**不在这里**——它常驻在输入区旁（`hint_line`）。这条断言以前查的是
+    "Ctrl-C / Ctrl-Q 在状态行里"，那是上一版的设计；键位搬到输入区之后，
+    查它就变成查错了地方。
+    """
     line = status_line(apply_event(_state(), {"type": "phase_changed", "phase": "tools_pending"}))
 
     assert "在跑工具" in line
-    assert "Ctrl-C" in line and "Ctrl-Q" in line
+    assert "●" in line, "在跑就该显示忙标记"
+    assert "脚本化" in line and "." in line, "模型与工作目录是这条会话的两样事实"
+    assert "Ctrl-C" not in line, "键位已经搬去输入区旁"
+
+
+# ---- B2 · 提示行与忙闲标记（纯投影） --------------------------------------------
+
+
+def test_hint_lists_only_the_keys_that_work_right_now() -> None:
+    """提示行只列**此刻真的可用**的键。
+
+    空闲时列出提交键，正在跑时不该列——那时按回车没有反应；等待审批时只列三个答案键。
+    "列一个按了没反应的键"和"把不可用的沙箱说成可用"是同一类错误。
+    """
+    idle = hint_line(_state())
+    busy = hint_line(apply_event(_state(), {"type": "phase_changed", "phase": "thinking"}))
+    waiting = hint_line(_state(approval=Approval(summary="要写文件")))
+
+    assert "回车 提交" in idle and "↑↓ 历史" in idle
+    assert "回车 提交" not in busy, "正在跑时提交键不生效，就不该列出来"
+    assert "打断" in busy
+    assert "y 允许一次" in waiting and "回车 提交" not in waiting
+
+
+def test_busy_mark_is_a_mark_not_a_sentence() -> None:
+    """忙闲标记要能一眼看出，不必读文字。"""
+    busy = apply_event(_state(), {"type": "phase_changed", "phase": "tools_pending"})
+    waiting = _state(approval=Approval(summary="要写文件"))
+
+    assert status_line(busy).startswith("●")
+    assert status_line(waiting).startswith("○"), "等审批时等的是人，不是在跑"
+
+
+# ---- B3 · 历史（纯逻辑，边界比看起来多） ----------------------------------------
+
+
+def test_history_returns_the_draft_when_you_come_back_down() -> None:
+    history = History()
+    history.push("第一条")
+    history.push("第二条")
+
+    assert history.previous("我正在写") == "第二条"
+    assert history.previous("") == "第一条"
+    assert history.previous("") == "第一条", "到最早一条就停住，不该越界"
+    assert history.next("") == "第二条"
+    assert history.next("") == "我正在写", "下翻到底回到草稿，而不是丢掉它"
+
+
+def test_history_without_entries_has_no_side_effects() -> None:
+    history = History()
+
+    assert history.previous("草稿") == "草稿"
+    assert history.next("草稿") == "草稿"
+
+
+def test_history_keeps_only_the_recent_entries() -> None:
+    history = History()
+    for index in range(60):
+        history.push(f"第 {index} 条")
+
+    assert len(history.entries) == 50, "只留最近 50 条"
+    assert history.previous("") == "第 59 条"
+
+
+def test_history_ignores_blank_submissions() -> None:
+    """空提交不该占历史——上翻一次却什么都没变，会让人以为按键坏了。"""
+    history = History()
+    history.push("   ")
+
+    assert history.entries == []
 
 
 # ---- C · 缺依赖时的降级 ---------------------------------------------------------
@@ -292,5 +369,83 @@ def test_headless_app_quits_on_the_quit_key(sandbox) -> None:
     async def drive() -> None:
         async with app.run_test() as pilot:
             await pilot.press("ctrl+q")
+
+    asyncio.run(drive())
+
+
+def _view_app(sandbox):
+    """一个装配好的无头应用。调用方 MUST 先 `importorskip("textual")`。"""
+    from kernel.permissions import PermissionPolicy
+    from surfaces.tui_app import FullscreenApp
+
+    return FullscreenApp(
+        session_id="tui-view",
+        root=sandbox,
+        make_master=lambda _prompt: None,
+        policy=PermissionPolicy(),
+        model_label="脚本化",
+    )
+
+
+def test_headless_input_area_marks_where_to_type(sandbox) -> None:
+    """输入区一眼看得出是输入区：有边框、有前缀，键位常驻在旁边一行。
+
+    这条查的正是"简陋"那件事：改动前输入框是一个裸 `Input`，键位塞在占位符里——
+    按下第一个字符它就没了，而"Ctrl-C 是打断当轮不是退出"恰恰是敲到一半才要的。
+    """
+    pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
+
+    app = _view_app(sandbox)
+
+    async def drive() -> None:
+        async with app.run_test():
+            composer = app.query_one("#composer")
+            assert composer.styles.border_top[0] == "round", "输入区要有边框，与正文分开"
+            assert str(app.query_one("#prompt-mark").render()).strip() == "❯"
+            placeholder = app.query_one("#prompt").placeholder
+            assert "Ctrl-" not in placeholder, "键位 MUST NOT 塞进占位符"
+            assert "回车 提交" in str(app.query_one("#hint").render())
+
+    asyncio.run(drive())
+
+
+def test_headless_hint_follows_the_session_state(sandbox) -> None:
+    """提示行随状态变：正在跑时不列提交键，等审批时只列三个答案键。"""
+    pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
+
+    app = _view_app(sandbox)
+
+    async def drive() -> None:
+        async with app.run_test():
+            app.ingest({"type": "phase_changed", "phase": "thinking"})
+            busy_hint = str(app.query_one("#hint").render())
+            assert "回车 提交" not in busy_hint
+            assert "打断" in busy_hint
+
+            app.ingest({"type": "approval_requested", "summary": "要写文件", "preview": ""})
+            assert "y 允许一次" in str(app.query_one("#hint").render())
+
+    asyncio.run(drive())
+
+
+def test_headless_up_arrow_recalls_history(sandbox) -> None:
+    """上键取回上一条、下键回到草稿——按键真的接到了纯逻辑上，而不只是逻辑本身对。"""
+    pytest.importorskip("textual", reason="没装全屏依赖；由装了它的 CI 作业覆盖")
+
+    from textual.widgets import Input
+
+    app = _view_app(sandbox)
+
+    async def drive() -> None:
+        async with app.run_test() as pilot:
+            prompt = app.query_one("#prompt", Input)
+            app._history.push("上一条指令")
+            prompt.value = "我正在写"
+
+            await pilot.press("up")
+            assert prompt.value == "上一条指令"
+
+            await pilot.press("down")
+            assert prompt.value == "我正在写", "下键回到草稿"
 
     asyncio.run(drive())

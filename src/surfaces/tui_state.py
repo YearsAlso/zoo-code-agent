@@ -195,13 +195,92 @@ PHASE_LABELS = {
 }
 
 
+BUSY_PHASES = ("thinking", "tools_pending")
+"""算「忙」的阶段：在想、在跑工具。等审批不算——那时候等的是人，不是在跑。"""
+
+IDLE_HINT = "回车 提交 · ↑↓ 历史 · Ctrl-C 打断当轮 · Ctrl-Q 退出"
+BUSY_HINT = "正在跑…… Ctrl-C 打断当轮 · Ctrl-Q 退出"
+APPROVAL_HINT = "y 允许一次 · a 总是允许 · n 拒绝"
+
+
+def busy_mark(state: TuiState) -> str:
+    """忙闲标记：一眼看得出在不在跑，不必读文字。"""
+    return "●" if state.phase in BUSY_PHASES else "○"
+
+
+def hint_line(state: TuiState) -> str:
+    """输入区旁的键位提示——**只列此刻真的可用的那几键**。
+
+    等待审批时仍然写「回车提交」是错的：那一刻回车不生效，列出来只会让人按了没反应。
+    同理，正在跑的时候提交键也不该出现。这与"沙箱不可用就不说可用"是同一条取舍。
+    """
+    if state.approval is not None:
+        return APPROVAL_HINT
+    if state.phase in BUSY_PHASES:
+        return BUSY_HINT
+    return IDLE_HINT
+
+
 def status_line(state: TuiState) -> str:
-    """底部状态行：阶段 / 轮次 / token / 边界。"""
+    """底部状态行：忙闲 / 阶段 / 轮次 / token / 模型 / 工作目录 / 边界。
+
+    **键位不在这里**：它常驻在输入区旁边（`hint_line`）。「打断当轮是哪个键」是敲到一半
+    才需要的，塞在状态行里既挤掉了模型与目录，又要和输入区的距离隔着一整个正文区。
+    """
     label = PHASE_LABELS.get(state.phase, state.phase)
     return (
-        f"{label} · 轮次 {state.turns} · tokens {state.tokens} · "
-        f"{state.banner.boundary} · Ctrl-C 打断当轮 / Ctrl-Q 退出"
+        f"{busy_mark(state)} {label} · 轮次 {state.turns} · tokens {state.tokens} · "
+        f"{state.banner.model} · {state.banner.root} · 边界 {state.banner.boundary}"
     )
+
+
+HISTORY_LIMIT = 50
+"""回取多少条已提交的输入。够用即可——它只在本次会话内有意义。"""
+
+
+@dataclass
+class History:
+    """已提交输入的来回翻。**纯逻辑**：不碰控件，只回答"现在该显示什么"。
+
+    边界比看起来多，所以它不写在控件回调里：没有历史时按键 MUST 无副作用、连续上翻到顶
+    要停住、下翻到底要回到**草稿**（不是回到最新一条）。这三条各有用例。
+    """
+
+    entries: list[str] = field(default_factory=list)
+    index: int | None = None
+    """`None` 表示"站在草稿上"，否则是 `entries` 里的下标。"""
+
+    draft: str = ""
+    """上翻之前正在写的内容——下翻回到这里，而不是丢掉。"""
+
+    def push(self, text: str) -> None:
+        """记一条已提交的输入，并把游标放回草稿。"""
+        if text.strip():
+            self.entries.append(text)
+            del self.entries[:-HISTORY_LIMIT]
+        self.index = None
+        self.draft = ""
+
+    def previous(self, current: str) -> str:
+        """上翻：返回该显示的内容。没有历史时原样返回。"""
+        if not self.entries:
+            return current
+        if self.index is None:
+            self.draft = current
+            self.index = len(self.entries) - 1
+        elif self.index > 0:
+            self.index -= 1
+        return self.entries[self.index]
+
+    def next(self, current: str) -> str:
+        """下翻：越过最新一条就回到草稿。没在上翻时原样返回。"""
+        if self.index is None:
+            return current
+        if self.index < len(self.entries) - 1:
+            self.index += 1
+            return self.entries[self.index]
+        self.index = None
+        return self.draft
 
 
 def render_lines(state: TuiState) -> list[str]:

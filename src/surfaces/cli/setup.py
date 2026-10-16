@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import shlex
 from dataclasses import dataclass, field
 from typing import Any, TextIO
@@ -18,6 +19,31 @@ from surfaces.cli.parser import EXIT_ERROR, EXIT_OK, STOP_TO_EXIT
 from surfaces.render import Renderer, emit, make_renderer
 from tools import Tool, collect_external_tools
 from tools.mcp import connect_all
+
+
+def is_a_terminal(stream: Any) -> bool:
+    """这个流是不是终端。拿不到 `isatty` 就当不是——失败关闭，与别处一致。"""
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def has_ui_library() -> bool:
+    """界面库在不在。用 `find_spec` 而不是 import：只问在不在，不触发它的导入副作用。"""
+    return importlib.util.find_spec("textual") is not None
+
+
+def choose_ui(*, is_tty: bool, has_textual: bool, requested: str = "auto") -> str:
+    """没有指定模式时该跑哪一种：`workers` / `tui` / `shell`。
+
+    纯函数——三个输入都从外面给，于是每一种组合都能在没有终端的环境里断言。
+
+    `auto` 的规则只有一条：**终端里给人，非终端给调度器**。非终端（管道、CI、子进程）
+    走的正是脚手架默认行为，一个字节都不变——那是 `zfc --worker` 的项目约定。
+    """
+    if requested != "auto":
+        return requested
+    if not is_tty:
+        return "workers"
+    return "tui" if has_textual else "shell"
 
 
 @dataclass

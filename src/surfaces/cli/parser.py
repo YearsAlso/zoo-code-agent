@@ -227,4 +227,14 @@ def build_parser() -> argparse.ArgumentParser:
             "与逐行外壳共用同一套会话语义与审批策略，只换显示方式"
         ),
     )
+    parser.add_argument(
+        "--ui",
+        choices=("auto", "workers", "tui", "shell"),
+        default="auto",
+        help=(
+            "没指定 -p / -i / --tui 时要做什么。默认 auto：在终端里进界面（装了界面库就全屏，"
+            "否则逐行外壳），非终端起调度器跑 Worker——管道与 CI 的行为不变。"
+            "想显式起调度器用 --ui workers"
+        ),
+    )
     return parser

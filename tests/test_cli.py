@@ -461,3 +461,89 @@ def test_batch_mode_is_unattended_and_fails_closed(tmp_path, sandbox) -> None:
     assert "[需要审批]" not in out.getvalue(), "批量 MUST NOT 逐次询问"
     records = AgentRuntime().session("task-01").store.by_role("tool")
     assert records and "--allow" in records[0]["content"], "拒绝理由要给出路"
+
+
+# ---- 没指定模式时：--ui 决定跑什么 ----------------------------------------------
+
+
+def test_auto_ui_picks_by_terminal_and_library() -> None:
+    """`auto` 的规则只有一条：**终端里给人，非终端给调度器**。
+
+    非终端那两格是这次改动唯一不能碰的地方——管道、CI、`zfc` 工作流都靠它，
+    所以它们 MUST 落回脚手架默认行为，与有没有界面库无关。
+    """
+    from surfaces.cli.setup import choose_ui
+
+    assert choose_ui(is_tty=True, has_textual=True) == "tui"
+    assert choose_ui(is_tty=True, has_textual=False) == "shell"
+    assert choose_ui(is_tty=False, has_textual=True) == "workers"
+    assert choose_ui(is_tty=False, has_textual=False) == "workers"
+
+
+def test_explicit_ui_ignores_the_environment() -> None:
+    """显式指定时不再看终端——否则"我明明写了 --ui tui"会在一台机器上有效、另一台上无效。"""
+    from surfaces.cli.setup import choose_ui
+
+    for requested in ("workers", "tui", "shell"):
+        for is_tty in (True, False):
+            for has_textual in (True, False):
+                assert (
+                    choose_ui(is_tty=is_tty, has_textual=has_textual, requested=requested)
+                    == requested
+                )
+
+
+def test_no_mode_and_no_terminal_runs_the_scaffold_default() -> None:
+    """没指定模式 + 非终端（pytest 里的 StringIO 就是非终端）→ 跑注入进来的脚手架默认行为。"""
+    called: list[int] = []
+    out = io.StringIO()
+
+    code = cli.main(
+        [], out=out, stdin=io.StringIO(), scaffold_default=lambda: called.append(1) or 0
+    )
+
+    assert called == [1], "非终端下 MUST 起调度器，而不是进界面或报错"
+    assert code == 0
+
+
+def test_no_mode_without_a_scaffold_default_keeps_the_old_error() -> None:
+    """没注入脚手架默认行为时（例如嵌入式调用），退回到原来那句提示，而不是乱跑。"""
+    out = io.StringIO()
+
+    code = cli.main([], out=out, stdin=io.StringIO())
+
+    assert code == cli.EXIT_ERROR
+    assert "需要 -p" in out.getvalue()
+
+
+def test_ui_workers_forces_the_scheduler_even_in_a_terminal() -> None:
+    """在终端里想跑调度器是可达的：`--ui workers` 是显式选择，不再是"看不出为什么"的默认。"""
+    called: list[int] = []
+    out = _FakeTTY()
+
+    code = cli.main(
+        ["--ui", "workers"],
+        out=out,
+        stdin=_FakeTTY(),
+        scaffold_default=lambda: called.append(1) or 0,
+    )
+
+    assert called == [1]
+    assert code == 0
+
+
+def test_ui_shell_enters_the_line_shell_without_a_terminal() -> None:
+    """`--ui shell` 在非终端下也进逐行外壳——显式指定不受环境摆布。
+
+    零密钥：用 `--script` 跑一条脚本化会话，然后从 stdin 收到 `/exit` 退出。
+    """
+    script = _script_file(Path("/tmp"), [{"text": "好。", "tokens": 1}])
+    out = io.StringIO()
+
+    code = cli.main(
+        ["--ui", "shell", "--script", str(script), "--root", "/tmp", "--session", "ui-shell"],
+        out=out,
+        stdin=io.StringIO("/exit\n"),
+    )
+
+    assert code == cli.EXIT_OK
